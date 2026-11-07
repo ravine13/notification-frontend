@@ -42,6 +42,10 @@ type RouteRecord = {
 type ToastType = 'success' | 'error' | 'info'
 type ToastState = { message: string; type: ToastType } | null
 
+type ActivityItem = { id: number; message: string; type: ToastType; time: string }
+type ZoneLite = { id: number; name: string }
+type TruckLite = { id: number; plateNumber: string; driverName?: string; model?: string }
+
 const navItems: { label: View; icon: typeof Home; adminOnly?: boolean }[] = [
   { label: 'Overview', icon: Home },
   { label: 'Collection schedules', icon: CalendarDays },
@@ -70,9 +74,34 @@ export default function Page() {
 
   const [routes, setRoutes] = useState<RouteRecord[]>([])
 
+  // ---- header: search / bell / profile ----
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [bellOpen, setBellOpen] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
+  const [activity, setActivity] = useState<ActivityItem[]>([])
+  const [unread, setUnread] = useState(0)
+
+  // ---- data used by search and the bell ----
+  const [zones, setZones] = useState<ZoneLite[]>([])
+  const [trucks, setTrucks] = useState<TruckLite[]>([])
+  const [notifCounts, setNotifCounts] = useState({ failed: 0, pending: 0 })
+
   function notify(message: string, type: ToastType = 'success') {
     setToast({ message, type })
     window.setTimeout(() => setToast(null), 2600)
+    setActivity((prev) =>
+        [
+          {
+            id: Date.now(),
+            message,
+            type,
+            time: new Date().toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' }),
+          },
+          ...prev,
+        ].slice(0, 20)
+    )
+    setUnread((n) => n + 1)
   }
 
   // ---- theme: load saved choice (or OS preference) and apply it to <html> ----
@@ -132,6 +161,51 @@ export default function Page() {
     }
     checkAuthentication()
   }, [])
+
+  // ---- keyboard shortcuts: Ctrl/Cmd+K opens search, Esc closes popups ----
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setSearchOpen(true)
+      }
+      if (e.key === 'Escape') {
+        setSearchOpen(false)
+        setBellOpen(false)
+        setProfileOpen(false)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // ---- load zones, trucks and notification counts once signed in ----
+  useEffect(() => {
+    if (!authenticated) return
+    const get = async (path: string) => {
+      try {
+        const r = await fetch(`${API_URL}${path}`, { credentials: 'include' })
+        return r.ok ? await r.json() : []
+      } catch {
+        return []
+      }
+    }
+    async function load() {
+      const [z, t] = await Promise.all([get('/zones'), get('/trucks')])
+      setZones(Array.isArray(z) ? z : [])
+      setTrucks(Array.isArray(t) ? t : [])
+      if (role === 'admin') {
+        const n: { status: string }[] = await get('/notifications')
+        const list = Array.isArray(n) ? n : []
+        setNotifCounts({
+          failed: list.filter((x) => x.status === 'FAILED').length,
+          pending: list.filter((x) => x.status === 'PENDING').length,
+        })
+      }
+    }
+    void load()
+  }, [authenticated, role])
+
   async function logout() {
     try {
       await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' })
@@ -145,6 +219,14 @@ export default function Page() {
       setActiveNav('Overview')
       setSidebarOpen(false)
       setRoutes([])
+      setSearchOpen(false)
+      setBellOpen(false)
+      setProfileOpen(false)
+      setActivity([])
+      setUnread(0)
+      setZones([])
+      setTrucks([])
+      setNotifCounts({ failed: 0, pending: 0 })
     }
   }
 
@@ -183,20 +265,40 @@ export default function Page() {
 
   const isAdmin = role === 'admin'
   const visibleNav = navItems.filter((item) => !item.adminOnly || isAdmin)
-  const title =
-      activeNav === 'Overview'
-          ? isAdmin ? 'Admin operations overview' : 'Staff operations workspace'
-          : activeNav
 
-
-  const rendersOwnComponent =
-      activeNav === 'Routes & zones' ||
-      activeNav === 'Trucks' ||
-      activeNav === 'Residents' ||
-      activeNav === 'Notifications' ||
-      activeNav === 'Collection schedules' ||
-      activeNav === 'Users' ||
-      activeNav === 'Reports'
+  // ---- search results: pages, zones and trucks ----
+  const searchResults = (() => {
+    const q = searchQuery.trim().toLowerCase()
+    const pages = visibleNav
+        .filter((n) => n.label.toLowerCase().includes(q))
+        .map((n) => ({
+          key: `p-${n.label}`,
+          label: n.label === 'Users' && !isAdmin ? 'My Profile' : n.label,
+          hint: 'Page',
+          Icon: n.icon,
+          go: n.label as View,
+        }))
+    if (!q) return pages
+    const zoneHits = zones
+        .filter((z) => z.name?.toLowerCase().includes(q))
+        .map((z) => ({
+          key: `z-${z.id}`,
+          label: z.name,
+          hint: 'Zone',
+          Icon: Map,
+          go: 'Routes & zones' as View,
+        }))
+    const truckHits = trucks
+        .filter((t) => [t.plateNumber, t.driverName, t.model].some((v) => v?.toLowerCase().includes(q)))
+        .map((t) => ({
+          key: `t-${t.id}`,
+          label: `${t.plateNumber}${t.driverName ? ` · ${t.driverName}` : ''}`,
+          hint: 'Truck',
+          Icon: Truck,
+          go: 'Trucks' as View,
+        }))
+    return [...pages, ...zoneHits, ...truckHits]
+  })()
 
   return (
       <div>
@@ -253,36 +355,142 @@ export default function Page() {
                   </h1>
                 </div>
               </div>
-              <div className="flex items-center gap-3">
-                <button className="hidden items-center gap-2 rounded-xl border bg-background px-3 py-2 text-sm text-muted-foreground sm:flex"><Search size={16} />Search</button>
-                <button className="relative rounded-xl border bg-background p-2.5 text-muted-foreground" aria-label="Notifications">
-                  <Bell size={18} /><span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-destructive" />
+
+              <div className="relative flex items-center gap-3">
+                {(bellOpen || profileOpen) && (
+                    <button
+                        aria-label="Close menu"
+                        className="fixed inset-0 z-30 cursor-default"
+                        onClick={() => { setBellOpen(false); setProfileOpen(false) }}
+                    />
+                )}
+
+                {/* Search */}
+                <button
+                    onClick={() => { setSearchQuery(''); setSearchOpen(true) }}
+                    className="flex items-center gap-2 rounded-xl border bg-background px-3 py-2 text-sm text-muted-foreground hover:bg-muted"
+                    aria-label="Search"
+                >
+                  <Search size={16} />
+                  <span className="hidden sm:inline">Search</span>
+                  <kbd className="ml-2 hidden rounded border px-1.5 text-[10px] sm:inline">Ctrl K</kbd>
                 </button>
-                <div className="hidden size-9 items-center justify-center rounded-full bg-[#d8ed65] text-xs font-bold text-[#173a2e] sm:flex">{displayInitials}</div>
+
+                {/* Notifications */}
+                <div className="relative z-40">
+                  <button
+                      onClick={() => { setBellOpen((o) => !o); setProfileOpen(false); setUnread(0) }}
+                      className="relative rounded-xl border bg-background p-2.5 text-muted-foreground hover:bg-muted"
+                      aria-label="Notifications"
+                  >
+                    <Bell size={18} />
+                    {(unread > 0 || notifCounts.failed > 0) && (
+                        <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-destructive" />
+                    )}
+                  </button>
+                  {bellOpen && (
+                      <div className="absolute right-0 mt-2 w-80 rounded-2xl border bg-card p-2 shadow-2xl">
+                        <div className="flex items-center justify-between px-3 py-2">
+                          <p className="text-sm font-semibold">Recent activity</p>
+                          {activity.length > 0 && (
+                              <button className="text-xs text-muted-foreground hover:underline" onClick={() => setActivity([])}>Clear</button>
+                          )}
+                        </div>
+
+                        {isAdmin && (notifCounts.failed > 0 || notifCounts.pending > 0) && (
+                            <div className="mx-2 mb-2 flex flex-col gap-1 rounded-xl bg-muted/60 p-3 text-sm">
+                              {notifCounts.failed > 0 && (
+                                  <p className="flex items-center gap-2 text-red-700">
+                                    <span className="size-2 rounded-full bg-destructive" />
+                                    {notifCounts.failed} notification{notifCounts.failed > 1 ? 's' : ''} failed to send
+                                  </p>
+                              )}
+                              {notifCounts.pending > 0 && (
+                                  <p className="flex items-center gap-2 text-amber-700">
+                                    <span className="size-2 rounded-full bg-[#f5ad62]" />
+                                    {notifCounts.pending} pending
+                                  </p>
+                              )}
+                            </div>
+                        )}
+
+                        <div className="max-h-72 overflow-y-auto">
+                          {activity.length === 0 ? (
+                              <p className="px-3 py-6 text-center text-sm text-muted-foreground">You&apos;re all caught up.</p>
+                          ) : (
+                              activity.map((a) => (
+                                  <div key={a.id} className="flex items-start gap-3 rounded-xl px-3 py-2.5 hover:bg-muted">
+                                    <span className={`mt-1.5 size-2 shrink-0 rounded-full ${a.type === 'error' ? 'bg-destructive' : 'bg-[#6b9d72]'}`} />
+                                    <div className="min-w-0 flex-1">
+                                      <p className="text-sm">{a.message}</p>
+                                      <p className="text-xs text-muted-foreground">{a.time}</p>
+                                    </div>
+                                  </div>
+                              ))
+                          )}
+                        </div>
+                        {isAdmin && (
+                            <button
+                                onClick={() => { setActiveNav('Notifications'); setBellOpen(false) }}
+                                className="mt-1 w-full rounded-xl border px-3 py-2.5 text-sm font-semibold hover:bg-muted"
+                            >
+                              View all notifications
+                            </button>
+                        )}
+                      </div>
+                  )}
+                </div>
+
+                {/* Profile */}
+                <div className="relative z-40">
+                  <button
+                      onClick={() => { setProfileOpen((o) => !o); setBellOpen(false) }}
+                      className="flex size-9 items-center justify-center rounded-full bg-[#d8ed65] text-xs font-bold text-[#173a2e]"
+                      aria-label="Account menu"
+                  >
+                    {displayInitials}
+                  </button>
+                  {profileOpen && (
+                      <div className="absolute right-0 mt-2 w-64 rounded-2xl border bg-card p-2 shadow-2xl">
+                        <div className="px-3 py-2.5">
+                          <p className="truncate text-sm font-semibold">{userName || 'User'}</p>
+                          <p className="truncate text-xs text-muted-foreground">{userEmail}</p>
+                          <span className="mt-2 inline-block rounded-full bg-[#d8ed65] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#173a2e]">
+                            {isAdmin ? 'Administrator' : 'Staff'}
+                          </span>
+                        </div>
+                        <div className="my-1 border-t" />
+                        <button
+                            onClick={() => { setActiveNav('Users'); setProfileOpen(false) }}
+                            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm hover:bg-muted"
+                        >
+                          <UserCog size={16} />My profile
+                        </button>
+                        <button
+                            onClick={() => { setProfileOpen(false); logout() }}
+                            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm hover:bg-muted"
+                        >
+                          <LogOut size={16} />Sign out
+                        </button>
+                      </div>
+                  )}
+                </div>
               </div>
             </header>
 
             <main className="mx-auto max-w-[1500px] p-5 sm:p-8">
-              {!rendersOwnComponent && (
-                  <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-                    <div>
-                      <p className="mb-1 text-sm font-medium text-muted-foreground">
-                        {isAdmin ? 'Full system access' : 'Read routes and schedules · update field status'}
-                      </p>
-                      <h2 className="text-2xl font-semibold tracking-tight">{title}</h2>
-                    </div>
-                    {isAdmin && activeNav === 'Overview' && (
-                        <button onClick={() => setShowSchedule(true)} className="flex w-fit items-center gap-2 rounded-xl bg-[#173a2e] px-4 py-3 text-sm font-semibold text-white shadow-lg">
-                          <Plus size={17} />Create schedule
-                        </button>
-                    )}
+              {isAdmin && activeNav === 'Overview' && (
+                  <div className="mb-7 flex justify-end">
+                    <button onClick={() => setShowSchedule(true)} className="flex w-fit items-center gap-2 rounded-xl bg-[#173a2e] px-4 py-3 text-sm font-semibold text-white shadow-lg">
+                      <Plus size={17} />Create schedule
+                    </button>
                   </div>
               )}
 
               {activeNav === 'Overview' && (
                   <Overview
                       isAdmin={isAdmin}
-                      onOpenRoutes={() => setActiveNav('Routes & zones')}
+                      onOpenRoutes={() => setActiveNav('Collection schedules')}
                   />
               )}
 
@@ -311,6 +519,56 @@ export default function Page() {
                   onPublish={() => { setShowSchedule(false); notify('Schedules published and residents notified') }}
               />
           )}
+
+          {searchOpen && (
+              <div
+                  className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 pt-[15vh]"
+                  onClick={() => setSearchOpen(false)}
+              >
+                <div
+                    role="dialog"
+                    aria-modal="true"
+                    className="w-full max-w-lg overflow-hidden rounded-2xl bg-card shadow-2xl"
+                    onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex items-center gap-3 border-b px-4">
+                    <Search size={18} className="text-muted-foreground" />
+                    <input
+                        autoFocus
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && searchResults[0]) {
+                            setActiveNav(searchResults[0].go)
+                            setSearchOpen(false)
+                          }
+                        }}
+                        placeholder="Search pages, zones, trucks…"
+                        className="w-full bg-transparent py-4 text-sm outline-none"
+                    />
+                    <button onClick={() => setSearchOpen(false)} aria-label="Close search"><X size={18} /></button>
+                  </div>
+                  <div className="max-h-80 overflow-y-auto p-2">
+                    {searchResults.length === 0 ? (
+                        <p className="px-3 py-6 text-center text-sm text-muted-foreground">No results for “{searchQuery}”</p>
+                    ) : (
+                        searchResults.map(({ key, label, hint, Icon, go }) => (
+                            <button
+                                key={key}
+                                onClick={() => { setActiveNav(go); setSearchOpen(false) }}
+                                className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm hover:bg-muted"
+                            >
+                              <Icon size={17} />
+                              <span className="flex-1 text-left">{label}</span>
+                              <span className="text-xs text-muted-foreground">{hint}</span>
+                            </button>
+                        ))
+                    )}
+                  </div>
+                </div>
+              </div>
+          )}
+
           {toast && (
               <div role="status" className="fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-xl bg-[#173a2e] px-4 py-3 text-sm font-medium text-white shadow-xl">
                 {toast.type === 'error' ? <X size={17} className="text-red-300" /> : <Check size={17} className="text-[#d8ed65]" />}
@@ -321,7 +579,6 @@ export default function Page() {
       </div>
   )
 }
-
 
 function CollectionSchedulesView() {
   const [subTab, setSubTab] = useState<'schedules' | 'collections'>('schedules')
@@ -347,6 +604,7 @@ function CollectionSchedulesView() {
       </div>
   )
 }
+
 function LoginScreen({ onLogin }: { onLogin: (role: Role, email: string, name: string) => void }) {
   const [mode, setMode] = useState<'login' | 'forgot'>('login')
   const [email, setEmail] = useState('')
