@@ -58,14 +58,14 @@ const navItems: { label: View; icon: typeof Home; adminOnly?: boolean }[] = [
 ]
 
 export default function Page() {
-  // ---- auth state (real, backend-driven) ----
+
   const [authenticated, setAuthenticated] = useState(false)
   const [authChecking, setAuthChecking] = useState(true)
   const [role, setRole] = useState<Role>('admin')
   const [userEmail, setUserEmail] = useState('')
   const [userName, setUserName] = useState('')
 
-  // ---- ui state ----
+
   const [activeNav, setActiveNav] = useState<View>('Overview')
   const [dark, setDark] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -74,7 +74,7 @@ export default function Page() {
 
   const [routes, setRoutes] = useState<RouteRecord[]>([])
 
-  // ---- header: search / bell / profile ----
+
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [bellOpen, setBellOpen] = useState(false)
@@ -82,7 +82,7 @@ export default function Page() {
   const [activity, setActivity] = useState<ActivityItem[]>([])
   const [unread, setUnread] = useState(0)
 
-  // ---- data used by search and the bell ----
+
   const [zones, setZones] = useState<ZoneLite[]>([])
   const [trucks, setTrucks] = useState<TruckLite[]>([])
   const [notifCounts, setNotifCounts] = useState({ failed: 0, pending: 0 })
@@ -104,13 +104,13 @@ export default function Page() {
     setUnread((n) => n + 1)
   }
 
-  // ---- theme: load saved choice (or OS preference) and apply it to <html> ----
+
   useEffect(() => {
     let saved: string | null = null
     try {
       saved = localStorage.getItem('theme')
     } catch {
-      // storage unavailable; fall back to OS preference
+
     }
     const isDark = saved
         ? saved === 'dark'
@@ -162,7 +162,7 @@ export default function Page() {
     checkAuthentication()
   }, [])
 
-  // ---- keyboard shortcuts: Ctrl/Cmd+K opens search, Esc closes popups ----
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
@@ -179,7 +179,7 @@ export default function Page() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // ---- load zones, trucks and notification counts once signed in ----
+
   useEffect(() => {
     if (!authenticated) return
     const get = async (path: string) => {
