@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
     CalendarDays, Plus, Pencil, Trash2, X, Loader2, MessageSquare, Send, Save,
     CheckCircle2, Clock, Ban, Truck as TruckIcon, Map as MapIcon, ListChecks,
-    AlertCircle, CalendarCheck,
+    AlertCircle, CalendarCheck, ChevronDown, Check, Info,
 } from 'lucide-react'
 
 // const API_URL = 'http://localhost:9123'
@@ -21,6 +21,8 @@ type Truck = {
     driverName?: string
     status: 'AVAILABLE' | 'IN_SERVICE' | 'MAINTENANCE'
 }
+
+type Zone = { id: number; name: string; description?: string }
 
 type Schedules = {
     id: number
@@ -79,9 +81,11 @@ function formatDate(iso: string) {
 export default function Schedules() {
     const [schedules, setSchedules] = useState<Schedules[]>([])
     const [trucks, setTrucks] = useState<Truck[]>([])
+    const [zones, setZones] = useState<Zone[]>([])
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
     const [error, setError] = useState('')
+    const [notice, setNotice] = useState('')
     const [formError, setFormError] = useState('')
     const [filter, setFilter] = useState<Filter>('ALL')
 
@@ -100,6 +104,7 @@ export default function Schedules() {
     useEffect(() => {
         fetchSchedules()
         fetchTrucks()
+        fetchZones()
         // Stop polling if the user leaves this tab mid-send
         return () => {
             if (pollRef.current) clearInterval(pollRef.current)
@@ -130,6 +135,15 @@ export default function Schedules() {
         }
     }
 
+    async function fetchZones() {
+        try {
+            const res = await fetch(`${API_URL}/zones`, { credentials: 'include' })
+            if (res.ok) setZones(await res.json())
+        } catch (err) {
+            console.error(err)
+        }
+    }
+
     function resetForm() {
         setZoneId('')
         setTruckId('')
@@ -152,6 +166,10 @@ export default function Schedules() {
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault()
+        if (!zoneId) {
+            setFormError('Please pick a zone.')
+            return
+        }
         setSaving(true)
         setFormError('')
 
@@ -218,6 +236,7 @@ export default function Schedules() {
         setSendingId(scheduleId)
         setSendProgress(null)
         setError('')
+        setNotice('')
 
         try {
             const res = await fetch(
@@ -230,6 +249,11 @@ export default function Schedules() {
             }
             const data = await res.json()
             const total = data.queued as number
+
+            // Tell the admin why fewer (or no) messages went out
+            if (data.duplicatesPrevented > 0 && typeof data.message === 'string') {
+                setNotice(data.message)
+            }
 
             if (total === 0) {
                 setSendProgress({ sent: 0, failed: 0, total: 0 })
@@ -277,6 +301,30 @@ export default function Schedules() {
             )
             .map((s) => s.truck!.id)
     )
+
+    const zoneName = (id?: number) => zones.find((z) => z.id === id)?.name ?? `Zone #${id}`
+
+    const zoneOptions: Opt[] = zones.map((z) => ({
+        value: String(z.id),
+        label: z.name,
+        sub: z.description,
+    }))
+
+    const truckOptions: Opt[] = trucks.map((t) => {
+        const maintenance = t.status === 'MAINTENANCE'
+        const booked = bookedTruckIds.has(t.id)
+        return {
+            value: String(t.id),
+            label: t.plateNumber,
+            sub: `${t.driverName || 'No driver'}${t.model ? ` · ${t.model}` : ''}`,
+            disabled: maintenance || booked,
+            badge: maintenance
+                ? { text: 'Maintenance', cls: 'bg-red-100 text-red-700' }
+                : booked
+                    ? { text: 'Booked that day', cls: 'bg-amber-100 text-amber-700' }
+                    : { text: 'Available', cls: 'bg-[#d8ed65] text-[#173a2e]' },
+        }
+    })
 
     const count = (st: Status) => schedules.filter((s) => s.status === st).length
     const scheduledCount = count('SCHEDULED')
@@ -339,6 +387,13 @@ export default function Schedules() {
                 </div>
             )}
 
+            {notice && (
+                <div className="mb-4 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    <Info size={16} className="shrink-0" />
+                    {notice}
+                </div>
+            )}
+
             {/* Stat cards */}
             <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                 <Stat tone="light" icon={ListChecks} label="Total schedules" value={schedules.length} detail={`${cancelledCount} cancelled`} delay={0} />
@@ -375,37 +430,40 @@ export default function Schedules() {
                     </div>
 
                     <div className="mt-5 grid gap-4 sm:grid-cols-2">
-                        <label className="text-sm font-medium">
-                            <span className="flex items-center gap-2"><MapIcon size={15} className="text-[#4c8c62]" />Zone ID</span>
-                            <input type="number" value={zoneId} onChange={(e) => setZoneId(e.target.value)} required className={inputCls} />
-                        </label>
+                        <div className="text-sm font-medium">
+                            <span className="flex items-center gap-2"><MapIcon size={15} className="text-[#4c8c62]" />Zone</span>
+                            <div className="mt-2">
+                                <Picker
+                                    options={zoneOptions}
+                                    value={zoneId}
+                                    onChange={setZoneId}
+                                    placeholder={zones.length === 0 ? 'Loading zones...' : 'Select a zone'}
+                                    icon={MapIcon}
+                                />
+                            </div>
+                        </div>
                         <label className="text-sm font-medium">
                             <span className="flex items-center gap-2"><CalendarDays size={15} className="text-[#4c8c62]" />Collection date</span>
                             <input type="date" value={collectionDate} onChange={(e) => setCollectionDate(e.target.value)} required className={inputCls} />
                         </label>
 
-                        <label className="text-sm font-medium sm:col-span-2">
+                        <div className="text-sm font-medium sm:col-span-2">
                             <span className="flex items-center gap-2">
                                 <TruckIcon size={15} className="text-[#4c8c62]" />
                                 Truck
                                 {!collectionDate && <span className="text-xs font-normal text-muted-foreground">(pick a date first)</span>}
                             </span>
-                            <select value={truckId} onChange={(e) => setTruckId(e.target.value)} className={inputCls}>
-                                <option value="">No truck assigned</option>
-                                {trucks.map((t) => {
-                                    const isBooked = bookedTruckIds.has(t.id)
-                                    const inMaintenance = t.status === 'MAINTENANCE'
-                                    const disabled = (inMaintenance || isBooked) && String(t.id) !== truckId
-                                    return (
-                                        <option key={t.id} value={t.id} disabled={disabled}>
-                                            {t.plateNumber}
-                                            {t.driverName ? ` · ${t.driverName}` : ''}
-                                            {inMaintenance ? ' (maintenance)' : isBooked ? ' (booked that day)' : ''}
-                                        </option>
-                                    )
-                                })}
-                            </select>
-                        </label>
+                            <div className="mt-2">
+                                <Picker
+                                    options={truckOptions}
+                                    value={truckId}
+                                    onChange={setTruckId}
+                                    placeholder="No truck assigned"
+                                    emptyLabel="No truck assigned"
+                                    icon={TruckIcon}
+                                />
+                            </div>
+                        </div>
 
                         <label className="text-sm font-medium sm:col-span-2">
                             <span className="flex items-center gap-2"><ListChecks size={15} className="text-[#4c8c62]" />Status</span>
@@ -491,6 +549,7 @@ export default function Schedules() {
                             <ScheduleRow
                                 key={s.id}
                                 schedule={s}
+                                zoneLabel={zoneName(s.zone?.id)}
                                 delay={Math.min(i, 8) * 50}
                                 sending={sendingId === s.id}
                                 anySending={sendingId !== null}
@@ -504,6 +563,100 @@ export default function Schedules() {
                 </div>
             </section>
         </>
+    )
+}
+
+/* ---------- Custom dropdown (replaces the native select, which Chrome clips) ---------- */
+
+type Opt = {
+    value: string
+    label: string
+    sub?: string
+    disabled?: boolean
+    badge?: { text: string; cls: string }
+}
+
+function Picker({ options, value, onChange, placeholder, emptyLabel, icon: Icon }: {
+    options: Opt[]
+    value: string
+    onChange: (v: string) => void
+    placeholder: string
+    emptyLabel?: string
+    icon: typeof TruckIcon
+}) {
+    const [open, setOpen] = useState(false)
+    const ref = useRef<HTMLDivElement>(null)
+
+    useEffect(() => {
+        const onClick = (e: MouseEvent) => {
+            if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+        }
+        const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
+        document.addEventListener('mousedown', onClick)
+        document.addEventListener('keydown', onKey)
+        return () => {
+            document.removeEventListener('mousedown', onClick)
+            document.removeEventListener('keydown', onKey)
+        }
+    }, [])
+
+    const selected = options.find((o) => o.value === value)
+
+    return (
+        <div ref={ref} className="relative">
+            <button
+                type="button"
+                onClick={() => setOpen((o) => !o)}
+                className="flex w-full items-center gap-3 rounded-xl border bg-background px-3 py-3 text-left text-sm outline-none transition focus:border-[#6b9d72]"
+            >
+                <Icon size={16} className="shrink-0 text-muted-foreground" />
+                <span className={`min-w-0 flex-1 truncate ${selected ? '' : 'text-muted-foreground'}`}>
+                    {selected ? `${selected.label}${selected.sub ? ` · ${selected.sub}` : ''}` : placeholder}
+                </span>
+                <ChevronDown size={16} className={`shrink-0 text-muted-foreground transition ${open ? 'rotate-180' : ''}`} />
+            </button>
+
+            {open && (
+                <div className="absolute z-50 mt-2 max-h-72 w-full overflow-auto rounded-xl border bg-card p-1 shadow-2xl">
+                    {emptyLabel && (
+                        <button
+                            type="button"
+                            onClick={() => { onChange(''); setOpen(false) }}
+                            className="flex w-full items-center rounded-lg px-3 py-2.5 text-left text-sm text-muted-foreground hover:bg-muted"
+                        >
+                            {emptyLabel}
+                        </button>
+                    )}
+                    {options.length === 0 && (
+                        <p className="px-3 py-2.5 text-sm text-muted-foreground">Nothing to choose yet.</p>
+                    )}
+                    {options.map((o) => {
+                        const isSelected = o.value === value
+                        const disabled = o.disabled && !isSelected
+                        return (
+                            <button
+                                key={o.value}
+                                type="button"
+                                disabled={disabled}
+                                onClick={() => { onChange(o.value); setOpen(false) }}
+                                className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+                            >
+                                <div className="min-w-0 flex-1">
+                                    <p className="truncate text-sm font-semibold">{o.label}</p>
+                                    {o.sub && <p className="truncate text-xs text-muted-foreground">{o.sub}</p>}
+                                </div>
+                                {o.badge && (
+                                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${o.badge.cls}`}>
+                                        {o.badge.text}
+                                    </span>
+                                )}
+                                {isSelected && <Check size={16} className="shrink-0" />}
+                            </button>
+                        )
+                    })}
+                </div>
+            )}
+        </div>
     )
 }
 
@@ -522,8 +675,9 @@ function Stat({ icon: Icon, label, value, detail, tone, delay }: {
     )
 }
 
-function ScheduleRow({ schedule: s, delay, sending, anySending, progress, onSend, onEdit, onDelete }: {
+function ScheduleRow({ schedule: s, zoneLabel, delay, sending, anySending, progress, onSend, onEdit, onDelete }: {
     schedule: Schedules
+    zoneLabel: string
     delay: number
     sending: boolean
     anySending: boolean
@@ -546,7 +700,7 @@ function ScheduleRow({ schedule: s, delay, sending, anySending, progress, onSend
 
                 <div className="min-w-0 flex-1">
                     <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm font-medium">
-                        <span className="flex items-center gap-1.5"><MapIcon size={14} className="text-[#4c8c62]" />Zone #{s.zone?.id}</span>
+                        <span className="flex items-center gap-1.5"><MapIcon size={14} className="text-[#4c8c62]" />{zoneLabel}</span>
                         <span className="flex items-center gap-1.5"><CalendarDays size={14} className="text-[#4c8c62]" />{formatDate(s.collectionDate)}</span>
                     </p>
                     <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
