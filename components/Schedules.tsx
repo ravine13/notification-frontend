@@ -56,10 +56,10 @@ const ANIMATIONS = `
 `
 
 const STATUS_STYLES = {
-    SCHEDULED:   { label: 'Scheduled',   icon: Clock,        pill: 'bg-amber-100 text-amber-700',   box: 'bg-amber-100 text-amber-700' },
-    IN_PROGRESS: { label: 'In progress', icon: TruckIcon,    pill: 'bg-blue-100 text-blue-700',     box: 'bg-blue-100 text-blue-700' },
-    COMPLETED:   { label: 'Completed',   icon: CheckCircle2, pill: 'bg-[#e3f1de] text-[#4c8c62]',   box: 'bg-[#173a2e] text-[#d8ed65]' },
-    CANCELLED:   { label: 'Cancelled',   icon: Ban,          pill: 'bg-red-100 text-red-700',       box: 'bg-red-100 text-red-600' },
+    SCHEDULED:   { label: 'Scheduled',   icon: Clock,        pill: 'bg-amber-100 text-amber-700',   box: 'bg-amber-100 text-amber-700',   dot: 'bg-amber-500' },
+    IN_PROGRESS: { label: 'In progress', icon: TruckIcon,    pill: 'bg-blue-100 text-blue-700',     box: 'bg-blue-100 text-blue-700',     dot: 'bg-blue-500' },
+    COMPLETED:   { label: 'Completed',   icon: CheckCircle2, pill: 'bg-[#e3f1de] text-[#4c8c62]',   box: 'bg-[#173a2e] text-[#d8ed65]',   dot: 'bg-[#4c8c62]' },
+    CANCELLED:   { label: 'Cancelled',   icon: Ban,          pill: 'bg-red-100 text-red-700',       box: 'bg-red-100 text-red-600',       dot: 'bg-red-500' },
 } as const
 
 const TONES = {
@@ -326,6 +326,13 @@ export default function Schedules() {
         }
     })
 
+    // Status options: a colored dot matches the status pills in the list below
+    const statusOptions: Opt[] = (Object.keys(STATUS_STYLES) as Status[]).map((k) => ({
+        value: k,
+        label: STATUS_STYLES[k].label,
+        dot: STATUS_STYLES[k].dot,
+    }))
+
     const count = (st: Status) => schedules.filter((s) => s.status === st).length
     const scheduledCount = count('SCHEDULED')
     const inProgressCount = count('IN_PROGRESS')
@@ -465,15 +472,18 @@ export default function Schedules() {
                             </div>
                         </div>
 
-                        <label className="text-sm font-medium sm:col-span-2">
+                        <div className="text-sm font-medium sm:col-span-2">
                             <span className="flex items-center gap-2"><ListChecks size={15} className="text-[#4c8c62]" />Status</span>
-                            <select value={status} onChange={(e) => setStatus(e.target.value as Status)} className={inputCls}>
-                                <option value="SCHEDULED">Scheduled</option>
-                                <option value="IN_PROGRESS">In progress</option>
-                                <option value="COMPLETED">Completed</option>
-                                <option value="CANCELLED">Cancelled</option>
-                            </select>
-                        </label>
+                            <div className="mt-2">
+                                <Picker
+                                    options={statusOptions}
+                                    value={status}
+                                    onChange={(v) => setStatus(v as Status)}
+                                    placeholder="Select a status"
+                                    icon={ListChecks}
+                                />
+                            </div>
+                        </div>
                     </div>
 
                     {formError && (
@@ -574,6 +584,7 @@ type Opt = {
     sub?: string
     disabled?: boolean
     badge?: { text: string; cls: string }
+    dot?: string // Tailwind bg class for a small colored dot
 }
 
 function Picker({ options, value, onChange, placeholder, emptyLabel, icon: Icon }: {
@@ -607,9 +618,12 @@ function Picker({ options, value, onChange, placeholder, emptyLabel, icon: Icon 
             <button
                 type="button"
                 onClick={() => setOpen((o) => !o)}
+                aria-haspopup="listbox"
+                aria-expanded={open}
                 className="flex w-full items-center gap-3 rounded-xl border bg-background px-3 py-3 text-left text-sm outline-none transition focus:border-[#6b9d72]"
             >
                 <Icon size={16} className="shrink-0 text-muted-foreground" />
+                {selected?.dot && <span className={`size-2 shrink-0 rounded-full ${selected.dot}`} />}
                 <span className={`min-w-0 flex-1 truncate ${selected ? '' : 'text-muted-foreground'}`}>
                     {selected ? `${selected.label}${selected.sub ? ` · ${selected.sub}` : ''}` : placeholder}
                 </span>
@@ -617,7 +631,10 @@ function Picker({ options, value, onChange, placeholder, emptyLabel, icon: Icon 
             </button>
 
             {open && (
-                <div className="absolute z-50 mt-2 max-h-72 w-full overflow-auto rounded-xl border bg-card p-1 shadow-2xl">
+                <div
+                    role="listbox"
+                    className="absolute z-50 mt-2 max-h-72 w-full overflow-auto rounded-xl border bg-card p-1 shadow-2xl"
+                >
                     {emptyLabel && (
                         <button
                             type="button"
@@ -637,10 +654,13 @@ function Picker({ options, value, onChange, placeholder, emptyLabel, icon: Icon 
                             <button
                                 key={o.value}
                                 type="button"
+                                role="option"
+                                aria-selected={isSelected}
                                 disabled={disabled}
                                 onClick={() => { onChange(o.value); setOpen(false) }}
                                 className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
                             >
+                                {o.dot && <span className={`size-2 shrink-0 rounded-full ${o.dot}`} />}
                                 <div className="min-w-0 flex-1">
                                     <p className="truncate text-sm font-semibold">{o.label}</p>
                                     {o.sub && <p className="truncate text-xs text-muted-foreground">{o.sub}</p>}
