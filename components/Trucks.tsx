@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
     Truck as TruckIcon, Plus, Pencil, Trash2, X, Loader2, Save, Search, Wrench,
     CheckCircle2, AlertCircle, User as UserIcon, Weight, Tag, CalendarDays, ListChecks, Hash,
+    ChevronDown, Check,
 } from 'lucide-react'
 
 // const API_URL = 'http://localhost:9123'
@@ -36,6 +37,13 @@ const STATUS_STYLES = {
     IN_SERVICE:  { label: 'In service',  icon: TruckIcon,    pill: 'bg-blue-100 text-blue-700',   box: 'bg-blue-100 text-blue-700' },
     MAINTENANCE: { label: 'Maintenance', icon: Wrench,       pill: 'bg-amber-100 text-amber-700', box: 'bg-amber-100 text-amber-700' },
 } as const
+
+// Options for the custom status dropdown
+const STATUS_OPTIONS: { value: Status; label: string; dot: string }[] = [
+    { value: 'AVAILABLE',   label: 'Available',                     dot: 'bg-[#4c8c62]' },
+    { value: 'IN_SERVICE',  label: 'In service',                    dot: 'bg-blue-500' },
+    { value: 'MAINTENANCE', label: "Maintenance (can't be booked)", dot: 'bg-amber-500' },
+]
 
 // Same palette tokens as the other tabs
 const TONES = {
@@ -424,14 +432,12 @@ export default function Trucks({ isAdmin }: { isAdmin: boolean }) {
                                 className={inputCls}
                             />
                         </label>
-                        <label className="text-sm font-medium sm:col-span-2">
+
+                        {/* A div (not a label) so clicking the dropdown button doesn't fire twice */}
+                        <div className="text-sm font-medium sm:col-span-2">
                             <span className="flex items-center gap-2"><ListChecks size={15} className="text-[#4c8c62]" />Status</span>
-                            <select value={status} onChange={(e) => setStatus(e.target.value as Status)} className={inputCls}>
-                                <option value="AVAILABLE">Available</option>
-                                <option value="IN_SERVICE">In service</option>
-                                <option value="MAINTENANCE">Maintenance (can't be booked)</option>
-                            </select>
-                        </label>
+                            <StatusSelect value={status} onChange={setStatus} />
+                        </div>
                     </div>
 
                     {showMaintenanceWarning && (
@@ -544,6 +550,79 @@ export default function Trucks({ isAdmin }: { isAdmin: boolean }) {
                 </div>
             </section>
         </>
+    )
+}
+
+// Custom dropdown that follows the app theme (the native <select> list ignores it)
+function StatusSelect({ value, onChange }: { value: Status; onChange: (v: Status) => void }) {
+    const [open, setOpen] = useState(false)
+    const ref = useRef<HTMLDivElement>(null)
+    const current = STATUS_OPTIONS.find((o) => o.value === value) ?? STATUS_OPTIONS[0]
+
+    // Close on outside click or Escape
+    useEffect(() => {
+        if (!open) return
+        const onDown = (e: MouseEvent) => {
+            if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+        }
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') setOpen(false)
+        }
+        document.addEventListener('mousedown', onDown)
+        document.addEventListener('keydown', onKey)
+        return () => {
+            document.removeEventListener('mousedown', onDown)
+            document.removeEventListener('keydown', onKey)
+        }
+    }, [open])
+
+    return (
+        <div ref={ref} className="relative mt-2">
+            <button
+                type="button"
+                aria-haspopup="listbox"
+                aria-expanded={open}
+                onClick={() => setOpen((o) => !o)}
+                className={`flex w-full items-center gap-3 rounded-xl border bg-background px-3 py-3 text-left text-sm outline-none transition ${
+                    open ? 'border-[#6b9d72]' : 'focus:border-[#6b9d72]'
+                }`}
+            >
+                <ListChecks size={15} className="shrink-0 text-muted-foreground" />
+                <span className={`size-2 shrink-0 rounded-full ${current.dot}`} />
+                <span className="flex-1 truncate">{current.label}</span>
+                <ChevronDown
+                    size={16}
+                    className={`shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`}
+                />
+            </button>
+
+            {open && (
+                <ul
+                    role="listbox"
+                    className="absolute left-0 right-0 z-30 mt-2 overflow-hidden rounded-xl border bg-card p-1 shadow-lg"
+                >
+                    {STATUS_OPTIONS.map((o) => {
+                        const selected = o.value === value
+                        return (
+                            <li key={o.value} role="option" aria-selected={selected}>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        onChange(o.value)
+                                        setOpen(false)
+                                    }}
+                                    className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left text-sm font-semibold transition hover:bg-muted"
+                                >
+                                    <span className={`size-2 shrink-0 rounded-full ${o.dot}`} />
+                                    <span className="flex-1">{o.label}</span>
+                                    {selected && <Check size={16} className="shrink-0" />}
+                                </button>
+                            </li>
+                        )
+                    })}
+                </ul>
+            )}
+        </div>
     )
 }
 
