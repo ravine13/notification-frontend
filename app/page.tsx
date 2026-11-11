@@ -75,6 +75,7 @@ export default function Page() {
   const [routes, setRoutes] = useState<RouteRecord[]>([])
 
 
+  const [now, setNow] = useState(new Date())
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [bellOpen, setBellOpen] = useState(false)
@@ -86,6 +87,7 @@ export default function Page() {
   const [zones, setZones] = useState<ZoneLite[]>([])
   const [trucks, setTrucks] = useState<TruckLite[]>([])
   const [notifCounts, setNotifCounts] = useState({ failed: 0, pending: 0 })
+
 
   function notify(message: string, type: ToastType = 'success') {
     setToast({ message, type })
@@ -180,6 +182,13 @@ export default function Page() {
   }, [])
 
 
+  // Re-check the time every minute so the greeting and date stay right if the tab is left open
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 60_000)
+    return () => clearInterval(id)
+  }, [])
+
+
   useEffect(() => {
     if (!authenticated) return
     const get = async (path: string) => {
@@ -234,10 +243,11 @@ export default function Page() {
       ? userName.trim().split(/\s+/).map((p) => p[0]).join('').slice(0, 2).toUpperCase()
       : 'U'
   const firstName = userName ? userName.trim().split(/\s+/)[0] : 'there'
-  const today = new Date().toLocaleDateString('en-KE', {
+  const hour = now.getHours()
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
+  const today = now.toLocaleDateString('en-KE', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
   })
-
 
   if (authChecking) {
     return (
@@ -266,7 +276,7 @@ export default function Page() {
   const isAdmin = role === 'admin'
   const visibleNav = navItems.filter((item) => !item.adminOnly || isAdmin)
 
-  // ---- search results: pages, zones and trucks ----
+
   const searchResults = (() => {
     const q = searchQuery.trim().toLowerCase()
     const pages = visibleNav
@@ -351,7 +361,7 @@ export default function Page() {
                 <div>
                   <p className="text-xs font-medium text-muted-foreground">{today}</p>
                   <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
-                    Good morning, {firstName} <span className="text-[#e1a65c]">.</span>
+                    {greeting}, {firstName} <span className="text-[#e1a65c]">.</span>
                   </h1>
                 </div>
               </div>
