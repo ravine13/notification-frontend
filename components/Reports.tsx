@@ -14,6 +14,11 @@ import {
 const API_URL = 'https://notification-system-tman.onrender.com'
 
 
+// One item of "Top failure reasons". `code` is the clean error code saved by the
+// backend ("UNKNOWN" for old rows). `detail` is a sample of the raw provider text
+// and can be null.
+type FailureItem = { code?: string | null; detail: string | null; count: number }
+
 type Summary = {
     range: { from: string; to: string }
     schedules: {
@@ -30,7 +35,7 @@ type Summary = {
         failureRate: number | null
         byStatus: Record<string, number>
         byChannel: Record<string, number>
-        topFailures: { detail: string; count: number }[]
+        topFailures: FailureItem[]
     }
     collections: {
         total: number
@@ -572,8 +577,120 @@ function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: 
 const axisTick = { fontSize: 12, fill: 'currentColor' }
 
 /* ------------------------------------------------------------------
-   Charts
+   Failure reasons: turn error codes into plain messages
    ------------------------------------------------------------------ */
+type FailureInfo = {
+    title: string
+    hint: string
+    tone: 'fix' | 'retry' | 'system'
+}
+
+// Exact codes saved by the backend (error_code column). This is checked first.
+const FAILURE_BY_CODE: Record<string, FailureInfo> = {
+    // Africa's Talking (SMS)
+    InvalidPhoneNumber:   { title: 'Invalid phone number', hint: 'Check the resident’s number and use the format +2547XXXXXXXX.', tone: 'fix' },
+    UnsupportedNumberType:{ title: 'Number type not supported', hint: 'This number cannot receive SMS. Ask the resident for another number.', tone: 'fix' },
+    UserInBlacklist:      { title: 'Resident opted out', hint: 'This resident blocked messages. Contact them another way.', tone: 'fix' },
+    InsufficientBalance:  { title: 'Out of SMS credit', hint: 'Top up your Africa’s Talking account.', tone: 'system' },
+    InvalidSenderId:      { title: 'Sender ID not allowed', hint: 'Check the sender ID configured in Africa’s Talking.', tone: 'system' },
+    RiskHold:             { title: 'Held for review', hint: 'Africa’s Talking is reviewing this message. Contact their support.', tone: 'system' },
+    DoNotDisturbRejection:{ title: 'Resident on Do Not Disturb', hint: 'The network blocked marketing-type messages to this number.', tone: 'fix' },
+    CouldNotRoute:        { title: 'Network could not route SMS', hint: 'The carrier could not deliver. Try again later.', tone: 'retry' },
+    GatewayError:         { title: 'SMS gateway error', hint: 'Temporary problem at the provider. Retry later.', tone: 'retry' },
+    InternalServerError:  { title: 'SMS gateway error', hint: 'Temporary problem at the provider. Retry later.', tone: 'retry' },
+    RejectedByGateway:    { title: 'Rejected by the carrier', hint: 'The network filtered the message. Check the content.', tone: 'system' },
+    NO_RECIPIENT:         { title: 'SMS not accepted', hint: 'The provider accepted no recipient. Check the number and sender ID.', tone: 'fix' },
+    HTTP_401:             { title: 'Provider login rejected', hint: 'The API key is wrong or expired. Update it in the server settings.', tone: 'system' },
+
+    // Meta WhatsApp Cloud API
+    '131030': { title: 'Number not allowed to receive messages', hint: 'Your WhatsApp app is in test mode. Add this number to the allowed recipients or go live.', tone: 'system' },
+    '131026': { title: 'Number is not on WhatsApp', hint: 'Send this resident an SMS instead.', tone: 'fix' },
+    '133010': { title: 'WhatsApp number not registered', hint: 'The sending number is not registered. Check the phone number ID.', tone: 'system' },
+    '131047': { title: '24-hour window closed', hint: 'Free-text messages only work within 24h of the resident’s last reply. Use the template mode.', tone: 'system' },
+    '132000': { title: 'Template parameters do not match', hint: 'The number of values sent differs from the template.', tone: 'system' },
+    '132001': { title: 'Template not found', hint: 'Check the template name and language (collection_reminder / en).', tone: 'system' },
+    '132005': { title: 'Template text too long', hint: 'The filled-in template is too long after translation.', tone: 'system' },
+    '132007': { title: 'Template blocked by policy', hint: 'Meta rejected the template content. Review it in Meta Business Manager.', tone: 'system' },
+    '131049': { title: 'Meta limited this message', hint: 'Meta limits messages to some users to keep quality high. Retry later or use SMS.', tone: 'retry' },
+    '131048': { title: 'Flagged as spam', hint: 'Too many messages were reported. Slow down and review your content.', tone: 'system' },
+    '131056': { title: 'Too many messages to one number', hint: 'Wait a little before sending again.', tone: 'retry' },
+    '130429': { title: 'Sending too fast', hint: 'WhatsApp throttled us. These messages can be retried.', tone: 'retry' },
+    '131042': { title: 'WhatsApp billing problem', hint: 'Check the payment method on your Meta business account.', tone: 'system' },
+    '131031': { title: 'WhatsApp account locked', hint: 'Check the account status in Meta Business Manager.', tone: 'system' },
+    '190':    { title: 'WhatsApp access token expired', hint: 'Generate a new token and update whatsapp.access-token.', tone: 'system' },
+    '100':    { title: 'WhatsApp rejected the request', hint: 'A parameter is invalid. Check the number format and template details.', tone: 'fix' },
+
+    // Both
+    NETWORK:  { title: 'Provider did not respond', hint: 'Temporary network problem. Retry later.', tone: 'retry' },
+}
+function explainFailure(
+    code: string | null | undefined,
+    detail: string | null
+): FailureInfo {
+    const hit = code ? FAILURE_BY_CODE[code] : undefined
+    if (hit) return hit
+
+    const fallback = detail
+        ? FAILURE_RULES.find((r) => r.test.test(detail))
+        : undefined
+
+    return fallback?.info ?? {
+        title: 'Message could not be delivered',
+        hint: 'Unrecognised cause. Open the technical details.',
+        tone: 'system',
+    }
+}
+
+// Fallback for codes not in the map: match on the raw text. First match wins.
+const FAILURE_RULES: { test: RegExp; info: FailureInfo }[] = [
+    {
+        test: /not (registered )?on whatsapp|63003|63024/i,
+        info: { title: 'Number is not on WhatsApp', hint: 'Send this resident an SMS instead.', tone: 'fix' },
+    },
+    {
+        test: /template|\b63016\b|\b63007\b|\b63015\b|24[- ]?hour/i,
+        info: { title: 'WhatsApp template problem', hint: 'The message template is not approved, or the 24-hour window has closed.', tone: 'system' },
+    },
+    {
+        test: /insufficient|balance|credit|funds|\b402\b/i,
+        info: { title: 'Out of messaging credit', hint: 'Top up your SMS/WhatsApp provider account.', tone: 'system' },
+    },
+    {
+        test: /unauthori[sz]ed|authenticat|credential|api key|invalid token|access token|\b20003\b|\b401\b|\b403\b/i,
+        info: { title: 'Provider login rejected', hint: 'The messaging API key or token is wrong or expired. Update it in the server settings.', tone: 'system' },
+    },
+    {
+        test: /rate limit|too many|\b429\b|throttl/i,
+        info: { title: 'Sending too fast', hint: 'The provider throttled us. These messages can be retried.', tone: 'retry' },
+    },
+    {
+        test: /timeout|timed out|ETIMEDOUT|ECONNRESET|ENOTFOUND|network|\b50[234]\b|unavailable/i,
+        info: { title: 'Provider did not respond', hint: 'Temporary network problem. Retry later.', tone: 'retry' },
+    },
+    {
+        test: /carrier|\b30007\b|\b30006\b|filtered|spam|RejectedByGateway/i,
+        info: { title: 'Rejected by the carrier', hint: 'The mobile network filtered the message. Check the sender ID or content.', tone: 'system' },
+    },
+]
+
+// function explainFailure(code?: string | null, detail?: string | null): FailureInfo {
+//     const byCode = code ? FAILURE_BY_CODE[code] : undefined
+//     if (byCode) return byCode
+//     const hit = detail ? FAILURE_RULES.find((r) => r.test.test(detail)) : undefined
+//     return hit?.info ?? {
+//         title: 'Message could not be delivered',
+//         hint: 'No known cause. Expand the technical details below.',
+//         tone: 'system',
+//     }
+// }
+
+const FAILURE_TONE: Record<FailureInfo['tone'], { label: string; cls: string }> = {
+    fix:    { label: 'Needs your action', cls: 'bg-red-100 text-red-700' },
+    retry:  { label: 'Can retry',         cls: 'bg-blue-100 text-blue-700' },
+    system: { label: 'System issue',      cls: 'bg-amber-100 text-amber-700' },
+}
+
+
 function SchedulesByMonthChart({ data }: { data: Summary['schedules']['byMonth'] }) {
     if (data.length === 0) return <div style={{ height: 288 }}><EmptyChart /></div>
     const rows = data.map((m) => ({ label: monthLabel(m.month), total: m.total, completed: m.completed }))
@@ -674,7 +791,7 @@ function DeliveryChart({ byStatus, total }: { byStatus: Record<string, number>; 
 
 function ChannelsAndFailures({ byChannel, failures, total }: {
     byChannel: Record<string, number>
-    failures: { detail: string; count: number }[]
+    failures: FailureItem[]
     total: number
 }) {
     if (total === 0) return <div style={{ height: 256 }}><EmptyChart text="No messages in this range" /></div>
@@ -707,13 +824,33 @@ function ChannelsAndFailures({ byChannel, failures, total }: {
                     <p className="mt-2 rounded-xl bg-muted/60 px-3 py-3 text-xs text-muted-foreground">No failed messages in this range.</p>
                 ) : (
                     <ol className="mt-2 flex flex-col gap-2">
-                        {failures.map((f, i) => (
-                            <li key={i} className="flex items-start gap-2 rounded-xl bg-muted/60 px-3 py-2 text-xs">
-                                <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-red-100 text-[10px] font-bold text-red-600">{i + 1}</span>
-                                <span className="min-w-0 flex-1 break-words text-muted-foreground">{f.detail}</span>
-                                <span className="font-semibold tabular-nums">{f.count}</span>
-                            </li>
-                        ))}
+                        {failures.map((f, i) => {
+                            const info = explainFailure(f.code, f.detail)
+                            const tone = FAILURE_TONE[info.tone]
+                            return (
+                                <li key={f.code ?? i} className="flex items-start gap-2 rounded-xl bg-muted/60 px-3 py-2 text-xs">
+                                    <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-red-100 text-[10px] font-bold text-red-600">{i + 1}</span>
+                                    <div className="min-w-0 flex-1">
+                                        <p className="font-medium">{info.title}</p>
+                                        <p className="mt-0.5 text-muted-foreground">{info.hint}</p>
+                                        <span className={`mt-1.5 inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${tone.cls}`}>
+                                            {tone.label}
+                                        </span>
+                                        {(f.code || f.detail) && (
+                                            <details className="mt-1.5 text-muted-foreground">
+                                                <summary className="cursor-pointer">Technical details</summary>
+                                                <p className="mt-1 break-words">
+                                                    {f.code && <span className="font-mono">{f.code}</span>}
+                                                    {f.code && f.detail && ' · '}
+                                                    {f.detail}
+                                                </p>
+                                            </details>
+                                        )}
+                                    </div>
+                                    <span className="font-semibold tabular-nums">{f.count}</span>
+                                </li>
+                            )
+                        })}
                     </ol>
                 )}
             </div>
