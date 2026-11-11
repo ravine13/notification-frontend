@@ -627,7 +627,7 @@ function explainFailure(
     code: string | null | undefined,
     detail: string | null
 ): FailureInfo {
-    const hit = code ? FAILURE_BY_CODE[code] : undefined
+    const hit = code && code !== 'UNKNOWN' ? FAILURE_BY_CODE[code] : undefined
     if (hit) return hit
 
     const fallback = detail
@@ -664,7 +664,7 @@ const FAILURE_RULES: { test: RegExp; info: FailureInfo }[] = [
         info: { title: 'Sending too fast', hint: 'The provider throttled us. These messages can be retried.', tone: 'retry' },
     },
     {
-        test: /timeout|timed out|ETIMEDOUT|ECONNRESET|ENOTFOUND|network|\b50[234]\b|unavailable/i,
+        test: /timeout|timed out|I\/O error|SSL|plaintext|ETIMEDOUT|ECONNRESET|ENOTFOUND|network|\b50[234]\b|unavailable/i,
         info: { title: 'Provider did not respond', hint: 'Temporary network problem. Retry later.', tone: 'retry' },
     },
     {
