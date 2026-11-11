@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
     UserCog, Plus, Pencil, Trash2, X, Loader2, Save, Search, Mail, Lock, Eye, EyeOff,
     User as UserIcon, ShieldCheck, Shield, Users as UsersIcon, UserPlus, AlertCircle,
+    ChevronDown, Check,
 } from 'lucide-react'
 
 // const API_URL = 'http://localhost:9123'
@@ -26,6 +27,12 @@ const ROLE_STYLES = {
     ADMIN: { label: 'Admin', icon: ShieldCheck, pill: 'bg-[#173a2e] text-[#d8ed65]', avatar: 'bg-[#173a2e] text-[#d8ed65]' },
     STAFF: { label: 'Staff', icon: Shield, pill: 'bg-[#e3f1de] text-[#4c8c62]', avatar: 'bg-[#e3f1de] text-[#4c8c62]' },
 } as const
+
+// Options for the custom role dropdown
+const ROLE_OPTIONS: { value: Role; label: string; dot: string }[] = [
+    { value: 'STAFF', label: 'Staff', dot: 'bg-[#4c8c62]' },
+    { value: 'ADMIN', label: 'Admin', dot: 'bg-[#f5ad62]' },
+]
 
 // Same palette tokens as the other tabs
 const TONES = {
@@ -360,6 +367,7 @@ export default function Users({ role: loggedInRole, email: loggedInEmail, onName
                             </div>
                         </label>
 
+                        {/* A div (not a label) so clicking the dropdown button doesn't fire twice */}
                         <div className="text-sm font-medium sm:col-span-2">
                             <span className="flex items-center gap-2"><ShieldCheck size={15} className="text-[#4c8c62]" />Role</span>
                             {editingUser ? (
@@ -368,10 +376,7 @@ export default function Users({ role: loggedInRole, email: loggedInEmail, onName
                                     <span className="text-xs font-normal text-muted-foreground">A role can’t be changed after the account is created.</span>
                                 </div>
                             ) : (
-                                <select value={role} onChange={(e) => setRole(e.target.value as Role)} className={inputCls}>
-                                    <option value="STAFF">Staff</option>
-                                    <option value="ADMIN">Admin</option>
-                                </select>
+                                <RoleSelect value={role} onChange={setRole} />
                             )}
                         </div>
                     </div>
@@ -478,6 +483,79 @@ export default function Users({ role: loggedInRole, email: loggedInEmail, onName
                 </div>
             </section>
         </>
+    )
+}
+
+// Custom dropdown that follows the app theme (the native <select> list ignores it)
+function RoleSelect({ value, onChange }: { value: Role; onChange: (v: Role) => void }) {
+    const [open, setOpen] = useState(false)
+    const ref = useRef<HTMLDivElement>(null)
+    const current = ROLE_OPTIONS.find((o) => o.value === value) ?? ROLE_OPTIONS[0]
+
+    // Close on outside click or Escape
+    useEffect(() => {
+        if (!open) return
+        const onDown = (e: MouseEvent) => {
+            if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+        }
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') setOpen(false)
+        }
+        document.addEventListener('mousedown', onDown)
+        document.addEventListener('keydown', onKey)
+        return () => {
+            document.removeEventListener('mousedown', onDown)
+            document.removeEventListener('keydown', onKey)
+        }
+    }, [open])
+
+    return (
+        <div ref={ref} className="relative mt-2">
+            <button
+                type="button"
+                aria-haspopup="listbox"
+                aria-expanded={open}
+                onClick={() => setOpen((o) => !o)}
+                className={`flex w-full items-center gap-3 rounded-xl border bg-background px-3 py-3 text-left text-sm outline-none transition ${
+                    open ? 'border-[#6b9d72]' : 'focus:border-[#6b9d72]'
+                }`}
+            >
+                <ShieldCheck size={15} className="shrink-0 text-muted-foreground" />
+                <span className={`size-2 shrink-0 rounded-full ${current.dot}`} />
+                <span className="flex-1 truncate">{current.label}</span>
+                <ChevronDown
+                    size={16}
+                    className={`shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`}
+                />
+            </button>
+
+            {open && (
+                <ul
+                    role="listbox"
+                    className="absolute left-0 right-0 z-30 mt-2 overflow-hidden rounded-xl border bg-card p-1 shadow-lg"
+                >
+                    {ROLE_OPTIONS.map((o) => {
+                        const selected = o.value === value
+                        return (
+                            <li key={o.value} role="option" aria-selected={selected}>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        onChange(o.value)
+                                        setOpen(false)
+                                    }}
+                                    className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left text-sm font-semibold transition hover:bg-muted"
+                                >
+                                    <span className={`size-2 shrink-0 rounded-full ${o.dot}`} />
+                                    <span className="flex-1">{o.label}</span>
+                                    {selected && <Check size={16} className="shrink-0" />}
+                                </button>
+                            </li>
+                        )
+                    })}
+                </ul>
+            )}
+        </div>
     )
 }
 
