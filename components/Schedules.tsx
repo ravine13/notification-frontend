@@ -217,12 +217,26 @@ export default function Schedules() {
     async function handleDelete(id: number) {
         if (!confirm('Delete this schedule?')) return
         setError('')
+        setNotice('')
         try {
             const res = await fetch(`${API_URL}/schedules/${id}`, {
                 method: 'DELETE',
                 credentials: 'include',
             })
-            if (!res.ok) throw new Error('Failed to delete schedule')
+
+            if (!res.ok) {
+                let msg = 'Could not delete the schedule. Please try again.'
+                if (res.status === 409) {
+                    const data = await res.json().catch(() => null)
+                    msg =
+                        typeof data?.message === 'string'
+                            ? data.message
+                            : "This schedule already has notifications, so it can't be deleted. Cancel it instead."
+                }
+                setError(msg)
+                return
+            }
+
             setSchedules((prev) => prev.filter((s) => s.id !== id))
         } catch (err) {
             console.error(err)
