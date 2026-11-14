@@ -601,6 +601,12 @@ const FAILURE_BY_CODE: Record<string, FailureInfo> = {
     RejectedByGateway:    { title: 'Rejected by the carrier', hint: 'The network filtered the message. Check the content.', tone: 'system' },
     NO_RECIPIENT:         { title: 'SMS not accepted', hint: 'The provider accepted no recipient. Check the number and sender ID.', tone: 'fix' },
     HTTP_401:             { title: 'Provider login rejected', hint: 'The API key is wrong or expired. Update it in the server settings.', tone: 'system' },
+    DeliveryFailure:      { title: 'Phone could not be reached', hint: 'The network could not deliver to this phone. Check the number, then retry.', tone: 'retry' },
+    UserInBlackList:      { title: 'Resident opted out', hint: 'This resident blocked messages. Contact them another way.', tone: 'fix' },
+    InsufficientCredit:   { title: 'Out of SMS credit', hint: 'Top up your Africa’s Talking account.', tone: 'system' },
+    NotNetworkSubscriber: { title: 'Number not active on the network', hint: 'Check the number with the resident.', tone: 'fix' },
+    UserDoesNotExist:     { title: 'Number does not exist', hint: 'Check the number with the resident.', tone: 'fix' },
+
 
     // Meta WhatsApp Cloud API
     '131030': { title: 'Number not allowed to receive messages', hint: 'Your WhatsApp app is in test mode. Add this number to the allowed recipients or go live.', tone: 'system' },
@@ -623,28 +629,23 @@ const FAILURE_BY_CODE: Record<string, FailureInfo> = {
     // Both
     NETWORK:  { title: 'Provider did not respond', hint: 'Temporary network problem. Retry later.', tone: 'retry' },
 }
-function explainFailure(
-    code: string | null | undefined,
-    detail: string | null
-): FailureInfo {
-    const hit = code && code !== 'UNKNOWN' ? FAILURE_BY_CODE[code] : undefined
-    if (hit) return hit
-
-    const fallback = detail
-        ? FAILURE_RULES.find((r) => r.test.test(detail))
-        : undefined
-
-    return fallback?.info ?? {
-        title: 'Message could not be delivered',
-        hint: 'Unrecognised cause. Open the technical details.',
-        tone: 'system',
-    }
-}
-
-// Fallback for codes not in the map: match on the raw text. First match wins.
+// Fallback for codes not in the map: match on the raw text. First match wins,
+// so more specific rules must come before broader ones.
 const FAILURE_RULES: { test: RegExp; info: FailureInfo }[] = [
     {
-        test: /not (registered )?on whatsapp|63003|63024/i,
+        test: /invalid.*(phone|number|recipient)|InvalidPhoneNumber|not a valid|\b21211\b|\b21614\b/i,
+        info: { title: 'Invalid phone number', hint: 'Check the resident’s number and use the format +2547XXXXXXXX.', tone: 'fix' },
+    },
+    {
+        test: /no phone|missing.*(phone|number)|phone.*(missing|empty)/i,
+        info: { title: 'Resident has no phone number', hint: 'Add a phone number to the resident’s profile.', tone: 'fix' },
+    },
+    {
+        test: /opt(ed)?[- ]?out|unsubscribe|blacklist|\b21610\b/i,
+        info: { title: 'Resident opted out', hint: 'This resident blocked messages. Contact them another way.', tone: 'fix' },
+    },
+    {
+        test: /not (registered )?on whatsapp|\b63003\b|\b63024\b/i,
         info: { title: 'Number is not on WhatsApp', hint: 'Send this resident an SMS instead.', tone: 'fix' },
     },
     {
@@ -663,6 +664,15 @@ const FAILURE_RULES: { test: RegExp; info: FailureInfo }[] = [
         test: /rate limit|too many|\b429\b|throttl/i,
         info: { title: 'Sending too fast', hint: 'The provider throttled us. These messages can be retried.', tone: 'retry' },
     },
+    // Must come BEFORE the network rule: "NotNetworkSubscriber" contains the word "network"
+    {
+        test: /DeliveryFailure|AbsentSubscriber|NotNetworkSubscriber|UserNotSubscribed|absent|unreachable|switched off|out of coverage|\b30003\b|\b30005\b|handset/i,
+        info: {
+            title: 'Phone could not be reached',
+            hint: 'The network could not deliver to this phone. It may be off, out of coverage, or the number is wrong. Check the number, then retry.',
+            tone: 'retry',
+        },
+    },
     {
         test: /timeout|timed out|I\/O error|SSL|plaintext|ETIMEDOUT|ECONNRESET|ENOTFOUND|network|\b50[234]\b|unavailable/i,
         info: { title: 'Provider did not respond', hint: 'Temporary network problem. Retry later.', tone: 'retry' },
@@ -673,16 +683,24 @@ const FAILURE_RULES: { test: RegExp; info: FailureInfo }[] = [
     },
 ]
 
-// function explainFailure(code?: string | null, detail?: string | null): FailureInfo {
-//     const byCode = code ? FAILURE_BY_CODE[code] : undefined
-//     if (byCode) return byCode
-//     const hit = detail ? FAILURE_RULES.find((r) => r.test.test(detail)) : undefined
-//     return hit?.info ?? {
-//         title: 'Message could not be delivered',
-//         hint: 'No known cause. Expand the technical details below.',
-//         tone: 'system',
-//     }
-// }
+function explainFailure(
+    code: string | null | undefined,
+    detail: string | null
+): FailureInfo {
+    const hit = code && code !== 'UNKNOWN' ? FAILURE_BY_CODE[code] : undefined
+    if (hit) return hit
+
+    const fallback = detail
+        ? FAILURE_RULES.find((r) => r.test.test(detail))
+        : undefined
+
+    return fallback?.info ?? {
+        title: 'Message could not be delivered',
+        hint: 'Unrecognised cause. Open the technical details.',
+        tone: 'system',
+    }
+}
+
 
 const FAILURE_TONE: Record<FailureInfo['tone'], { label: string; cls: string }> = {
     fix:    { label: 'Needs your action', cls: 'bg-red-100 text-red-700' },
