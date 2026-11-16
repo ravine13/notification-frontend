@@ -22,8 +22,8 @@ const API_URL = 'https://notification-system-tman.onrender.com'
 
 const DEMO = {
   accounts: [
-    { role: 'Admin', email: 'demo.admin@wastetrack.ke', password: 'CHANGE_ME' },
-    { role: 'Staff', email: 'demo.staff@wastetrack.ke', password: 'CHANGE_ME' },
+    { role: 'Admin', email: 'newadmin@example.com', password: 'Admin@123' },
+    { role: 'Staff', email: 'newStaff@example.com', password: 'Staff@123' },
   ],
   whatsappDisplay: '0771 917778',
   whatsappLink: 'https://wa.me/254771917778?text=hi',
@@ -728,42 +728,39 @@ function LoginScreen({ onLogin }: { onLogin: (role: Role, email: string, name: s
                 <button disabled={loading} className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-[#173a2e] px-4 py-3.5 font-semibold text-white transition hover:bg-[#245843] disabled:opacity-70">
                   {loading ? 'Signing in…' : 'Sign in'}<LogIn size={17} />
                 </button>
-
                 {/* Demo access */}
-                <div className="mt-6 rounded-2xl border border-[#dfe6dc] bg-[#f6f9f2] p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-[#19332a]">
+                <div className="mt-4 rounded-xl border border-[#dfe6dc] bg-[#f6f9f2] p-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-[#19332a]">
                     Demo access
                   </p>
 
-                  <div className="mt-3 flex flex-col gap-2">
+                  <div className="mt-2 grid grid-cols-2 gap-2">
                     {DEMO.accounts.map((a) => (
                         <button
                             key={a.role}
                             type="button"
                             onClick={() => { setEmail(a.email); setPassword(a.password); setError('') }}
-                            className="rounded-xl border border-[#dfe6dc] bg-white px-3 py-2 text-left text-xs text-[#19332a] transition hover:border-[#6b9d72]"
+                            className="rounded-lg border border-[#dfe6dc] bg-white px-2 py-1.5 text-left text-[10px] leading-4 text-[#19332a] transition hover:border-[#6b9d72]"
                         >
-                          <span className="font-semibold">{a.role}</span>
-                          <span className="block text-[#789086]">Email: {a.email}</span>
-                          <span className="block text-[#789086]">Password: {a.password}</span>
-                          <span className="mt-1 block text-[10px] font-semibold text-[#245843]">Tap to fill</span>
+                          <span className="text-[11px] font-semibold">{a.role}</span>
+                          <span className="block break-all text-[#789086]">{a.email}</span>
+                          <span className="block break-all text-[#789086]">{a.password}</span>
+                          <span className="mt-0.5 block text-[9px] font-semibold text-[#245843]">Tap to fill</span>
                         </button>
                     ))}
                   </div>
 
-                  <div className="mt-4 border-t border-[#dfe6dc] pt-3">
-                    <p className="text-xs font-semibold text-[#19332a]">Want to receive a test notification?</p>
-                    <p className="mt-1 text-xs leading-5 text-[#789086]">
-                      Send a WhatsApp message to <span className="font-semibold">{DEMO.whatsappDisplay}</span> first.
-                      WhatsApp only lets the app message you after you&apos;ve messaged it.
+                  <div className="mt-2 flex items-center justify-between gap-3 border-t border-[#dfe6dc] pt-2">
+                    <p className="text-[10px] leading-4 text-[#789086]">
+                      For a test notification, message <span className="font-semibold text-[#19332a]">{DEMO.whatsappDisplay}</span> on WhatsApp first.
                     </p>
                     <a
                         href={DEMO.whatsappLink}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="mt-2 inline-flex items-center justify-center rounded-xl bg-[#25D366] px-3 py-2 text-xs font-semibold text-white hover:opacity-90"
+                        className="shrink-0 rounded-lg bg-[#25D366] px-2.5 py-1.5 text-[10px] font-semibold text-white hover:opacity-90"
                     >
-                      Message us on WhatsApp
+                      WhatsApp
                     </a>
                   </div>
                 </div>
