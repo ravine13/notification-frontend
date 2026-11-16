@@ -20,6 +20,15 @@ import Trucks from '../components/Trucks'
 // const API_URL = 'http://localhost:9123'
 const API_URL = 'https://notification-system-tman.onrender.com'
 
+const DEMO = {
+  accounts: [
+    { role: 'Admin', email: 'demo.admin@wastetrack.ke', password: 'CHANGE_ME' },
+    { role: 'Staff', email: 'demo.staff@wastetrack.ke', password: 'CHANGE_ME' },
+  ],
+  whatsappDisplay: '0771 917778',
+  whatsappLink: 'https://wa.me/254771917778?text=hi',
+}
+
 type Role = 'admin' | 'staff'
 type View =
     | 'Overview'
