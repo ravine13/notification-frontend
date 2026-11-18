@@ -498,14 +498,14 @@ export default function Page() {
               </div>
             </header>
 
-            <main className="mx-auto max-w-[1500px] p-5 sm:p-8">
-              {isAdmin && activeNav === 'Overview' && (
-                  <div className="mb-7 flex justify-end">
-                    <button onClick={() => setShowSchedule(true)} className="flex w-fit items-center gap-2 rounded-xl bg-[#173a2e] px-4 py-3 text-sm font-semibold text-white shadow-lg">
-                      <Plus size={17} />Create schedule
-                    </button>
-                  </div>
-              )}
+            {/*<main className="mx-auto max-w-[1500px] p-5 sm:p-8">*/}
+            {/*  {isAdmin && activeNav === 'Overview' && (*/}
+            {/*      <div className="mb-7 flex justify-end">*/}
+            {/*        <button onClick={() => setShowSchedule(true)} className="flex w-fit items-center gap-2 rounded-xl bg-[#173a2e] px-4 py-3 text-sm font-semibold text-white shadow-lg">*/}
+            {/*          <Plus size={17} />Create schedule*/}
+            {/*        </button>*/}
+            {/*      </div>*/}
+            {/*  )}*/}
 
               {activeNav === 'Overview' && (
                   <Overview
