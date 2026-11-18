@@ -8,7 +8,8 @@ import {
 } from 'lucide-react'
 
 // const API_URL = 'http://localhost:9123'
-const API_URL = 'https://notification-system-tman.onrender.com'
+// const API_URL = 'https://notification-system-tman.onrender.com'
+const API_URL = 'https://notificationsystem-production-bf454768.up.railway.app'
 
 type Status = 'AVAILABLE' | 'IN_SERVICE' | 'MAINTENANCE'
 type Filter = 'ALL' | Status

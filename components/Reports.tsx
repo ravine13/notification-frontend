@@ -11,7 +11,8 @@ import {
 } from 'lucide-react'
 
 // const API_URL = 'http://localhost:9123'
-const API_URL = 'https://notification-system-tman.onrender.com'
+// const API_URL = 'https://notification-system-tman.onrender.com'
+const API_URL = 'https://notificationsystem-production-bf454768.up.railway.app'
 
 
 // One item of "Top failure reasons". `code` is the clean error code saved by the
