@@ -18,7 +18,8 @@ import Reports from '../components/Reports'
 import Trucks from '../components/Trucks'
 
 // const API_URL = 'http://localhost:9123'
-const API_URL = 'https://notification-system-tman.onrender.com'
+// const API_URL = 'https://notification-system-tman.onrender.com'
+const API_URL = 'https://notificationsystem-production-bf454768.up.railway.app'
 
 const DEMO = {
   accounts: [
