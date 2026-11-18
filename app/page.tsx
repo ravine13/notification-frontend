@@ -506,6 +506,8 @@ export default function Page() {
             {/*        </button>*/}
             {/*      </div>*/}
             {/*  )}*/}
+            <main className="mx-auto max-w-[1500px] p-5 sm:p-8">
+              {/* Create schedule button removed: schedules are created in Collection schedules */}
 
               {activeNav === 'Overview' && (
                   <Overview
