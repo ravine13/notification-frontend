@@ -4,11 +4,13 @@ import { useEffect, useState } from 'react'
 import {
     Bell, Plus, Pencil, Trash2, X, Loader2, Save, Search, Phone, Users,
     CalendarDays, Clock, Send, CheckCircle2, Eye, XCircle, AlertCircle, ListChecks,
+    ChevronLeft, ChevronRight,
 } from 'lucide-react'
 
 // const API_URL = 'http://localhost:9123'
 // const API_URL = 'https://notification-system-tman.onrender.com'
 const API_URL = 'https://notificationsystem-production-bf454768.up.railway.app'
+const PAGE_SIZE = 10
 
 type Status = 'PENDING' | 'SENT' | 'DELIVERED' | 'READ' | 'FAILED'
 type Filter = 'ALL' | Status
@@ -63,8 +65,6 @@ function formatDateTime(iso: string | null) {
     })
 }
 
-// <input type="datetime-local"> expects local time, so slicing the UTC ISO string
-// would shift the value by the timezone offset (3 hours in Kenya).
 function toLocalInput(iso: string | null) {
     if (!iso) return ''
     const d = new Date(iso)
@@ -82,6 +82,7 @@ export default function Notifications() {
 
     const [filter, setFilter] = useState<Filter>('ALL')
     const [query, setQuery] = useState('')
+    const [page, setPage] = useState(1)
 
     const [showForm, setShowForm] = useState(false)
     const [editingNotification, setEditingNotification] = useState<Notification | null>(null)
@@ -92,6 +93,11 @@ export default function Notifications() {
     const [message, setMessage] = useState('')
     const [status, setStatus] = useState<Status>('PENDING')
     const [sentAt, setSentAt] = useState('')
+
+    // Jump back to page 1 whenever the filter or search changes
+    useEffect(() => {
+        setPage(1)
+    }, [filter, query])
 
     useEffect(() => {
         fetchNotifications()
@@ -221,6 +227,11 @@ export default function Notifications() {
         .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
         .filter((n) => filter === 'ALL' || n.status === filter)
         .filter((n) => !q || n.phoneNumber.toLowerCase().includes(q) || n.message.toLowerCase().includes(q))
+
+    // Pagination: clamp the page so deleting the last item on a page doesn't leave you on an empty one
+    const totalPages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE))
+    const currentPage = Math.min(page, totalPages)
+    const paged = visible.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
 
     const inputCls =
         'mt-2 w-full rounded-xl border bg-background px-3 py-3 text-sm outline-none transition focus:border-[#6b9d72]'
@@ -428,7 +439,7 @@ export default function Notifications() {
                             }
                         />
                     ) : (
-                        visible.map((n, i) => (
+                        paged.map((n, i) => (
                             <NotificationRow
                                 key={n.id}
                                 notification={n}
@@ -439,6 +450,16 @@ export default function Notifications() {
                         ))
                     )}
                 </div>
+
+                {!loading && (
+                    <Pagination
+                        page={currentPage}
+                        totalPages={totalPages}
+                        total={visible.length}
+                        pageSize={PAGE_SIZE}
+                        onChange={setPage}
+                    />
+                )}
             </section>
         </>
     )
@@ -524,6 +545,65 @@ function EmptyState({ icon: Icon, title, subtitle }: { icon: typeof Bell; title:
             <Icon className="mx-auto text-muted-foreground" size={26} />
             <p className="mt-3 text-sm font-semibold">{title}</p>
             <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>
+        </div>
+    )
+}
+
+function Pagination({ page, totalPages, total, pageSize, onChange }: {
+    page: number; totalPages: number; total: number; pageSize: number
+    onChange: (p: number) => void
+}) {
+    if (total <= pageSize) return null
+
+    const from = (page - 1) * pageSize + 1
+    const to = Math.min(page * pageSize, total)
+
+    // 1 … 4 5 6 … 12 style list
+    const items: (number | '…')[] = []
+    for (let p = 1; p <= totalPages; p++) {
+        if (p === 1 || p === totalPages || Math.abs(p - page) <= 1) items.push(p)
+        else if (items[items.length - 1] !== '…') items.push('…')
+    }
+
+    return (
+        <div className="mt-5 flex flex-col items-center justify-between gap-3 border-t pt-4 sm:flex-row">
+            <p className="text-xs text-muted-foreground">
+                Showing {from}–{to} of {total}
+            </p>
+            <div className="flex items-center gap-1">
+                <button
+                    onClick={() => onChange(page - 1)}
+                    disabled={page === 1}
+                    aria-label="Previous page"
+                    className="rounded-lg border p-2 text-muted-foreground transition hover:bg-muted disabled:opacity-40"
+                >
+                    <ChevronLeft size={16} />
+                </button>
+                {items.map((it, i) =>
+                    it === '…' ? (
+                        <span key={`gap-${i}`} className="px-2 text-xs text-muted-foreground">…</span>
+                    ) : (
+                        <button
+                            key={it}
+                            onClick={() => onChange(it)}
+                            aria-current={it === page ? 'page' : undefined}
+                            className={`min-w-9 rounded-lg px-3 py-2 text-xs font-semibold transition ${
+                                it === page ? 'bg-[#173a2e] text-white' : 'border text-muted-foreground hover:bg-muted'
+                            }`}
+                        >
+                            {it}
+                        </button>
+                    )
+                )}
+                <button
+                    onClick={() => onChange(page + 1)}
+                    disabled={page === totalPages}
+                    aria-label="Next page"
+                    className="rounded-lg border p-2 text-muted-foreground transition hover:bg-muted disabled:opacity-40"
+                >
+                    <ChevronRight size={16} />
+                </button>
+            </div>
         </div>
     )
 }
