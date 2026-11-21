@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import {
     PackageCheck, Plus, Pencil, Trash2, X, Loader2, CheckCircle2, AlertTriangle,
     Clock, CalendarDays, Users, Save, ListChecks, Package, AlertCircle,
+    ChevronLeft, ChevronRight,
 } from 'lucide-react'
 
 // const API_URL = 'http://localhost:9123'
@@ -21,6 +22,9 @@ type Collection = {
     collectedAt: string | null
     createdAt: string
 }
+
+const PAGE_SIZES = [5, 10, 25, 50] as const
+const DEFAULT_PAGE_SIZE = 10
 
 const ANIMATIONS = `
 @keyframes col-fade-up { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
@@ -53,12 +57,30 @@ function formatDateTime(iso: string | null) {
     })
 }
 
+// 1 ... 4 5 6 ... 20  (null renders as an ellipsis)
+function pageList(current: number, total: number): (number | null)[] {
+    if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1)
+    const pages = new Set([1, total, current - 1, current, current + 1])
+    if (current <= 3) [2, 3, 4].forEach((p) => pages.add(p))
+    if (current >= total - 2) [total - 3, total - 2, total - 1].forEach((p) => pages.add(p))
+    const sorted = [...pages].filter((p) => p >= 1 && p <= total).sort((a, b) => a - b)
+    const out: (number | null)[] = []
+    sorted.forEach((p, i) => {
+        if (i > 0 && p - sorted[i - 1] > 1) out.push(null)
+        out.push(p)
+    })
+    return out
+}
+
 export default function RoutesCollections() {
     const [collections, setCollections] = useState<Collection[]>([])
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
     const [error, setError] = useState('')
     const [filter, setFilter] = useState<Filter>('ALL')
+
+    const [page, setPage] = useState(1)
+    const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE)
 
     const [showForm, setShowForm] = useState(false)
     const [editingCollection, setEditingCollection] = useState<Collection | null>(null)
@@ -161,7 +183,27 @@ export default function RoutesCollections() {
     const pendingCount = collections.filter((c) => c.status === 'PENDING').length
     const missedCount = collections.filter((c) => c.status === 'MISSED').length
 
-    const visible = filter === 'ALL' ? collections : collections.filter((c) => c.status === filter)
+    // Newest first by creation date; id breaks ties (and covers a missing createdAt)
+    const visible = (filter === 'ALL' ? collections : collections.filter((c) => c.status === filter))
+        .slice()
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime() || b.id - a.id)
+
+    // ---- pagination ----
+    // Clamp the page so deleting the last row of a page doesn't leave an empty one
+    const totalPages = Math.max(1, Math.ceil(visible.length / pageSize))
+    const currentPage = Math.min(page, totalPages)
+    const startIndex = (currentPage - 1) * pageSize
+    const paged = visible.slice(startIndex, startIndex + pageSize)
+
+    function changeFilter(next: Filter) {
+        setFilter(next)
+        setPage(1)
+    }
+
+    function changePageSize(next: number) {
+        setPageSize(next)
+        setPage(1)
+    }
 
     const filters: { key: Filter; label: string; count: number }[] = [
         { key: 'ALL', label: 'All', count: collections.length },
@@ -308,7 +350,7 @@ export default function RoutesCollections() {
                         {filters.map((f) => (
                             <button
                                 key={f.key}
-                                onClick={() => setFilter(f.key)}
+                                onClick={() => changeFilter(f.key)}
                                 className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
                                     filter === f.key ? 'bg-[#173a2e] text-white' : 'text-muted-foreground hover:text-foreground'
                                 }`}
@@ -339,19 +381,115 @@ export default function RoutesCollections() {
                             }
                         />
                     ) : (
-                        visible.map((c, i) => (
+                        paged.map((c, i) => (
                             <CollectionRow
                                 key={c.id}
                                 collection={c}
-                                delay={Math.min(i, 8) * 50}
+                                delay={i * 40}
                                 onEdit={() => startEdit(c)}
                                 onDelete={() => handleDelete(c.id)}
                             />
                         ))
                     )}
                 </div>
+
+                {!loading && visible.length > 0 && (
+                    <Pagination
+                        page={currentPage}
+                        totalPages={totalPages}
+                        total={visible.length}
+                        from={startIndex + 1}
+                        to={Math.min(startIndex + pageSize, visible.length)}
+                        pageSize={pageSize}
+                        onPage={setPage}
+                        onPageSize={changePageSize}
+                    />
+                )}
             </section>
         </>
+    )
+}
+
+function Pagination({ page, totalPages, total, from, to, pageSize, onPage, onPageSize }: {
+    page: number
+    totalPages: number
+    total: number
+    from: number
+    to: number
+    pageSize: number
+    onPage: (p: number) => void
+    onPageSize: (n: number) => void
+}) {
+    const btn =
+        'flex size-9 items-center justify-center rounded-lg text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40'
+
+    return (
+        <nav
+            aria-label="Pagination"
+            className="mt-5 flex flex-col items-center justify-between gap-3 border-t pt-4 sm:flex-row"
+        >
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                <span>
+                    Showing <span className="font-semibold text-foreground tabular-nums">{from}–{to}</span> of{' '}
+                    <span className="font-semibold text-foreground tabular-nums">{total}</span>
+                </span>
+                <label className="flex items-center gap-2">
+                    <span className="sr-only sm:not-sr-only">Per page</span>
+                    <select
+                        value={pageSize}
+                        onChange={(e) => onPageSize(Number(e.target.value))}
+                        aria-label="Records per page"
+                        className="rounded-lg border bg-background px-2 py-1.5 text-xs outline-none transition focus:border-[#6b9d72]"
+                    >
+                        {PAGE_SIZES.map((n) => (
+                            <option key={n} value={n}>{n}</option>
+                        ))}
+                    </select>
+                </label>
+            </div>
+
+            {totalPages > 1 && (
+                <div className="flex items-center gap-1">
+                    <button
+                        onClick={() => onPage(page - 1)}
+                        disabled={page === 1}
+                        aria-label="Previous page"
+                        className={`${btn} border hover:bg-muted`}
+                    >
+                        <ChevronLeft size={16} />
+                    </button>
+
+                    {pageList(page, totalPages).map((p, i) =>
+                        p === null ? (
+                            <span key={`gap-${i}`} className="flex size-9 items-center justify-center text-xs text-muted-foreground">
+                                …
+                            </span>
+                        ) : (
+                            <button
+                                key={p}
+                                onClick={() => onPage(p)}
+                                aria-label={`Page ${p}`}
+                                aria-current={p === page ? 'page' : undefined}
+                                className={`${btn} tabular-nums ${
+                                    p === page ? 'bg-[#173a2e] text-white' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                                }`}
+                            >
+                                {p}
+                            </button>
+                        )
+                    )}
+
+                    <button
+                        onClick={() => onPage(page + 1)}
+                        disabled={page === totalPages}
+                        aria-label="Next page"
+                        className={`${btn} border hover:bg-muted`}
+                    >
+                        <ChevronRight size={16} />
+                    </button>
+                </div>
+            )}
+        </nav>
     )
 }
 

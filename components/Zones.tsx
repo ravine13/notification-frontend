@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
     Map as MapIcon, Plus, Pencil, Trash2, X, Loader2, Save, Search,
     CalendarDays, CalendarCheck, CalendarX, AlertCircle, MapPinned,
+    Users, Phone, Home, ChevronRight,
 } from 'lucide-react'
 
 // const API_URL = 'http://localhost:9123'
@@ -17,6 +18,13 @@ type Zone = {
     collectionDay: string | null
     createdAt: string
     updatedAt: string
+}
+
+type Resident = {
+    id: number
+    name: string
+    phoneNumber: string
+    address: string | null
 }
 
 type Filter = 'ALL' | 'ASSIGNED' | 'UNASSIGNED'
@@ -43,11 +51,15 @@ const TONES = {
 
 const ANIMATIONS = `
 @keyframes zn-fade-up { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+@keyframes zn-slide-in { from { transform: translateX(100%); } to { transform: none; } }
+@keyframes zn-fade { from { opacity: 0; } to { opacity: 1; } }
 .zn-in   { animation: zn-fade-up .5s cubic-bezier(.2,.7,.2,1) backwards; }
 .zn-lift { transition: transform .25s ease, box-shadow .25s ease; }
 .zn-lift:hover { transform: translateY(-3px); box-shadow: 0 14px 30px -12px rgba(23,58,46,.35); }
+.zn-drawer  { animation: zn-slide-in .3s cubic-bezier(.2,.7,.2,1); }
+.zn-overlay { animation: zn-fade .25s ease; }
 @media (prefers-reduced-motion: reduce) {
-  .zn-in { animation: none !important; }
+  .zn-in, .zn-drawer, .zn-overlay { animation: none !important; }
   .zn-lift { transition: none; }
 }
 `
@@ -64,6 +76,7 @@ export default function Zones() {
 
     const [showForm, setShowForm] = useState(false)
     const [editingZone, setEditingZone] = useState<Zone | null>(null)
+    const [openZone, setOpenZone] = useState<Zone | null>(null)
 
     const [zoneName, setZoneName] = useState('')
     const [description, setDescription] = useState('')
@@ -332,7 +345,7 @@ export default function Zones() {
                 <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-start">
                     <div>
                         <h3 className="font-semibold">All zones</h3>
-                        <p className="mt-1 text-xs text-muted-foreground">Sorted by name, with collection day</p>
+                        <p className="mt-1 text-xs text-muted-foreground">Select a zone to see its residents</p>
                     </div>
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                         <label className="flex items-center gap-2 rounded-xl border bg-background px-3 py-2.5 transition focus-within:border-[#6b9d72] sm:w-56">
@@ -387,6 +400,7 @@ export default function Zones() {
                                 key={z.id}
                                 zone={z}
                                 delay={Math.min(i, 8) * 50}
+                                onOpen={() => setOpenZone(z)}
                                 onEdit={() => startEdit(z)}
                                 onDelete={() => handleDelete(z.id)}
                             />
@@ -394,6 +408,8 @@ export default function Zones() {
                     )}
                 </div>
             </section>
+
+            {openZone && <ZoneDrawer zone={openZone} onClose={() => setOpenZone(null)} />}
         </>
     )
 }
@@ -413,9 +429,10 @@ function Stat({ icon: Icon, label, value, detail, tone, delay }: {
     )
 }
 
-function ZoneRow({ zone: z, delay, onEdit, onDelete }: {
+function ZoneRow({ zone: z, delay, onOpen, onEdit, onDelete }: {
     zone: Zone
     delay: number
+    onOpen: () => void
     onEdit: () => void
     onDelete: () => void
 }) {
@@ -425,20 +442,29 @@ function ZoneRow({ zone: z, delay, onEdit, onDelete }: {
     return (
         <div className="zn-in zn-lift rounded-xl bg-muted/60 p-3" style={{ animationDelay: `${delay}ms` }}>
             <div className="flex flex-wrap items-center gap-3 sm:flex-nowrap">
-                <div
-                    className={`flex size-10 shrink-0 items-center justify-center rounded-lg ${
-                        hasDay ? 'bg-[#173a2e] text-[#d8ed65]' : 'bg-amber-100 text-amber-700'
-                    }`}
+                <button
+                    type="button"
+                    onClick={onOpen}
+                    aria-label={`Open ${z.name}`}
+                    className="flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-[#6b9d72]"
                 >
-                    <MapIcon size={18} />
-                </div>
+                    <div
+                        className={`flex size-10 shrink-0 items-center justify-center rounded-lg ${
+                            hasDay ? 'bg-[#173a2e] text-[#d8ed65]' : 'bg-amber-100 text-amber-700'
+                        }`}
+                    >
+                        <MapIcon size={18} />
+                    </div>
 
-                <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{z.name}</p>
-                    <p className="mt-1 truncate text-xs text-muted-foreground">
-                        {z.description || 'No description'}
-                    </p>
-                </div>
+                    <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium">{z.name}</p>
+                        <p className="mt-1 truncate text-xs text-muted-foreground">
+                            {z.description || 'No description'}
+                        </p>
+                    </div>
+
+                    <ChevronRight size={16} className="shrink-0 text-muted-foreground" />
+                </button>
 
                 <span
                     className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold ${
@@ -466,6 +492,134 @@ function ZoneRow({ zone: z, delay, onEdit, onDelete }: {
                     </button>
                 </div>
             </div>
+        </div>
+    )
+}
+
+/* ------------------------------------------------------------------ */
+/* Zone drawer: residents for one zone                                 */
+/* ------------------------------------------------------------------ */
+
+function ZoneDrawer({ zone, onClose }: { zone: Zone; onClose: () => void }) {
+    const [residents, setResidents] = useState<Resident[]>([])
+    const [loading, setLoading] = useState(true)
+    const [error, setError] = useState('')
+
+    const load = useCallback(async () => {
+        setError('')
+        try {
+            const res = await fetch(`${API_URL}/residents/zone/${zone.id}`, { credentials: 'include' })
+            if (!res.ok) throw new Error('Failed to load residents')
+            setResidents(await res.json())
+        } catch (err) {
+            console.error(err)
+            setError('Could not load this zone. Check your connection and try again.')
+        } finally {
+            setLoading(false)
+        }
+    }, [zone.id])
+
+    useEffect(() => {
+        setLoading(true)
+        load()
+    }, [load])
+
+    // Close on Escape, lock page scroll while open
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+        document.addEventListener('keydown', onKey)
+        const prev = document.body.style.overflow
+        document.body.style.overflow = 'hidden'
+        return () => {
+            document.removeEventListener('keydown', onKey)
+            document.body.style.overflow = prev
+        }
+    }, [onClose])
+
+    const sorted = [...residents].sort((a, b) => a.name.localeCompare(b.name))
+    const dayLabel = zone.collectionDay ? DAY_LABEL[zone.collectionDay] ?? zone.collectionDay : 'No collection day'
+
+    return (
+        <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label={`${zone.name} details`}>
+            <div className="zn-overlay absolute inset-0 bg-[#173a2e]/40" onClick={onClose} />
+
+            <aside className="zn-drawer relative flex h-full w-full max-w-xl flex-col bg-background shadow-2xl">
+                {/* Header */}
+                <header className="relative overflow-hidden bg-[#173a2e] p-6 text-white">
+                    <div className="absolute -right-8 -top-12 size-40 rounded-full bg-[#d8ed65]/15 blur-2xl" />
+                    <div className="relative flex items-start justify-between gap-4">
+                        <div className="flex min-w-0 items-center gap-3">
+                            <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-[#d8ed65] text-[#173a2e]">
+                                <MapIcon size={22} />
+                            </div>
+                            <div className="min-w-0">
+                                <h3 className="truncate text-xl font-semibold tracking-tight">{zone.name}</h3>
+                                <p className="mt-0.5 text-xs text-[#c1d2c7]">{dayLabel}</p>
+                            </div>
+                        </div>
+                        <button
+                            onClick={onClose}
+                            aria-label="Close"
+                            className="rounded-lg p-1.5 text-[#c1d2c7] transition hover:bg-white/10 hover:text-white"
+                        >
+                            <X size={20} />
+                        </button>
+                    </div>
+                    {zone.description && <p className="relative mt-4 text-sm text-[#c1d2c7]">{zone.description}</p>}
+                    <div className="relative mt-4 flex gap-2 text-xs font-semibold">
+                        <span className="flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5">
+                            <Users size={13} /> {residents.length} resident{residents.length === 1 ? '' : 's'}
+                        </span>
+                    </div>
+                </header>
+
+                {/* Body */}
+                <div className="flex-1 overflow-y-auto p-5">
+                    {error && (
+                        <div className="mb-4 flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                            <AlertCircle size={16} className="shrink-0" />
+                            {error}
+                        </div>
+                    )}
+
+                    <h4 className="text-sm font-semibold">Residents</h4>
+
+                    <div className="mt-4">
+                        {loading ? (
+                            <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+                                <Loader2 className="size-4 animate-spin" />
+                                Loading residents...
+                            </div>
+                        ) : sorted.length === 0 ? (
+                            <EmptyState
+                                icon={Users}
+                                title="No residents in this zone yet"
+                                subtitle="Add residents from the Residents page and choose this zone."
+                            />
+                        ) : (
+                            <ul className="divide-y rounded-2xl border bg-card shadow-sm">
+                                {sorted.map((r) => (
+                                    <li key={r.id} className="flex items-start gap-3 px-4 py-3">
+                                        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#173a2e] text-xs font-bold text-[#d8ed65]">
+                                            {r.name.trim().split(/\s+/).map((p) => p[0]).join('').slice(0, 2).toUpperCase() || '?'}
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                            <p className="truncate text-sm font-medium">{r.name}</p>
+                                            <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                                                <span className="flex items-center gap-1.5"><Phone size={12} />{r.phoneNumber}</span>
+                                                <span className="flex min-w-0 items-center gap-1.5">
+                                                    <Home size={12} className="shrink-0" />
+                                                    <span className="truncate">{r.address || 'No address'}</span>
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </div>
+                </div>
+            </aside>
         </div>
     )
 }

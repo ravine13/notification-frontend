@@ -122,8 +122,8 @@ export default function Residents() {
         setSaving(true)
         setFormError('')
 
-        // zone is a @ManyToOne relation on the backend, so it needs to be
-        // sent as a nested object with an id, not a flat zoneId field.
+        // zone is a @ManyToOne relation on the backend, so it is sent as a
+        // nested object with an id, not as a flat id field.
         const payload = {
             name,
             phoneNumber,
@@ -147,7 +147,11 @@ export default function Residents() {
             if (!res.ok) {
                 const text = await res.text()
                 console.error('Save resident failed:', res.status, text)
-                setFormError('Could not save the resident. Check the phone number and zone, then try again.')
+                setFormError(
+                    res.status === 409
+                        ? 'A resident with this phone number already exists in this zone.'
+                        : 'Could not save the resident. Check the phone number and zone, then try again.'
+                )
                 return
             }
 
@@ -201,7 +205,7 @@ export default function Residents() {
         .sort((a, b) => a.name.localeCompare(b.name))
 
     const inputCls =
-        'mt-2 w-full rounded-xl border bg-background px-3 py-3 text-sm outline-none transition focus:border-[#6b9d72]'
+        'mt-2 w-full rounded-xl border bg-background px-3 py-3 text-sm outline-none transition focus:border-[#6b9d72] disabled:opacity-60'
 
     return (
         <>
@@ -364,7 +368,7 @@ export default function Residents() {
                 <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-start">
                     <div>
                         <h3 className="font-semibold">All residents</h3>
-                        <p className="mt-1 text-xs text-muted-foreground">Sorted by name, with phone and zone</p>
+                        <p className="mt-1 text-xs text-muted-foreground">Sorted by name, with phone, address and zone</p>
                     </div>
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                         <label className="flex items-center gap-2 rounded-xl border bg-background px-3 py-2.5 transition focus-within:border-[#6b9d72] sm:w-64">

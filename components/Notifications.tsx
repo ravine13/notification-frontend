@@ -14,6 +14,8 @@ const PAGE_SIZE = 10
 
 type Status = 'PENDING' | 'SENT' | 'DELIVERED' | 'READ' | 'FAILED'
 type Filter = 'ALL' | Status
+type NoticeType = 'SCHEDULED' | 'UPDATED' | 'CANCELLED'
+type Channel = 'SMS' | 'WHATSAPP'
 
 type Notification = {
     id: number
@@ -22,6 +24,9 @@ type Notification = {
     phoneNumber: string
     message: string
     status: Status
+    channel?: Channel
+    noticeType?: NoticeType
+    noticeDate?: string
     sentAt: string | null
     createdAt: string
 }
@@ -35,6 +40,15 @@ const STATUS_STYLES = {
     READ:      { label: 'Read',      icon: Eye,          pill: 'bg-[#e3f1de] text-[#4c8c62]',   box: 'bg-[#173a2e] text-[#d8ed65]' },
     FAILED:    { label: 'Failed',    icon: XCircle,      pill: 'bg-red-100 text-red-700',       box: 'bg-red-100 text-red-600' },
 } as const
+
+// What kind of message this was: the first reminder, a date change, or a cancellation
+const NOTICE_STYLES = {
+    SCHEDULED: { label: 'Reminder',  cls: 'bg-[#e3f1de] text-[#4c8c62]' },
+    UPDATED:   { label: 'Updated',   cls: 'bg-amber-100 text-amber-700' },
+    CANCELLED: { label: 'Cancelled', cls: 'bg-red-100 text-red-700' },
+} as const
+
+const CHANNEL_LABEL: Record<Channel, string> = { SMS: 'SMS', WHATSAPP: 'WhatsApp' }
 
 // Same palette tokens as the other tabs, plus a red icon variant for failures
 const TONES = {
@@ -174,7 +188,11 @@ export default function Notifications() {
             if (!res.ok) {
                 const text = await res.text()
                 console.error('Save notification failed:', res.status, text)
-                setFormError('Could not save the notification. Check the schedule and resident IDs, then try again.')
+                setFormError(
+                    res.status === 409
+                        ? 'This resident already has this notification for that schedule.'
+                        : 'Could not save the notification. Check the schedule and resident IDs, then try again.'
+                )
                 return
             }
 
@@ -281,7 +299,14 @@ export default function Notifications() {
             <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                 <Stat tone="light" icon={Bell} label="Total messages" value={notifications.length} detail="All notifications" delay={0} />
                 <Stat tone="orange" icon={Clock} label="Pending" value={pendingCount} detail="Waiting to be sent" delay={70} />
-                <Stat tone="dark" icon={CheckCircle2} label="Sent" value={wentOut} detail={`${readCount} read by residents`} delay={140} />
+                <Stat
+                    tone="dark"
+                    icon={CheckCircle2}
+                    label="Gone out"
+                    value={wentOut}
+                    detail={`${deliveredCount + readCount} delivered or read`}
+                    delay={140}
+                />
                 <Stat tone="alert" icon={XCircle} label="Failed" value={failedCount} detail={failedCount > 0 ? 'Need a retry' : 'Nothing to fix'} delay={210} />
             </section>
 
@@ -490,6 +515,7 @@ function NotificationRow({ notification: n, delay, onEdit, onDelete }: {
     const st = STATUS_STYLES[n.status] ?? STATUS_STYLES.PENDING
     const StatusIcon = st.icon
     const when = formatDateTime(n.sentAt ?? n.createdAt)
+    const notice = NOTICE_STYLES[n.noticeType ?? 'SCHEDULED'] ?? NOTICE_STYLES.SCHEDULED
 
     return (
         <div className="nt-in nt-lift rounded-xl bg-muted/60 p-3" style={{ animationDelay: `${delay}ms` }}>
@@ -502,6 +528,12 @@ function NotificationRow({ notification: n, delay, onEdit, onDelete }: {
                     <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm font-medium">
                         <span className="flex items-center gap-1.5"><Phone size={14} className="text-[#4c8c62]" />{n.phoneNumber}</span>
                         <span className="flex items-center gap-1.5"><Users size={14} className="text-[#4c8c62]" />Resident #{n.resident?.id}</span>
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${notice.cls}`}>{notice.label}</span>
+                        {n.channel && (
+                            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                                {CHANNEL_LABEL[n.channel] ?? n.channel}
+                            </span>
+                        )}
                     </p>
                     <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{n.message}</p>
                     <p className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">

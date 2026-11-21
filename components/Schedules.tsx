@@ -4,16 +4,18 @@ import { useEffect, useRef, useState } from 'react'
 import {
     CalendarDays, Plus, Pencil, Trash2, X, Loader2, MessageSquare, Send, Save,
     CheckCircle2, Clock, Ban, Truck as TruckIcon, Map as MapIcon, ListChecks,
-    AlertCircle, CalendarCheck, ChevronDown, Check, Info,
+    AlertCircle, CalendarCheck, ChevronDown, ChevronLeft, ChevronRight, Check, Info,
 } from 'lucide-react'
 
 // const API_URL = 'http://localhost:9123'
 // const API_URL = 'https://notification-system-tman.onrender.com'
 const API_URL = 'https://notificationsystem-production-bf454768.up.railway.app'
+const PAGE_SIZE = 10
 
 type Status = 'SCHEDULED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'
-type Filter = 'ALL' | Status
+type Filter = 'ALL' | 'OVERDUE' | Status
 type Channel = 'SMS' | 'WHATSAPP'
+type NoticeType = 'SCHEDULED' | 'UPDATED' | 'CANCELLED'
 
 type Truck = {
     id: number
@@ -38,10 +40,21 @@ type Schedules = {
 type NotificationRecord = {
     id: number
     schedule: { id: number }
+    resident?: { id: number }
+    channel?: Channel
+    noticeType?: NoticeType
+    noticeDate?: string
     status: 'PENDING' | 'SENT' | 'FAILED' | 'DELIVERED' | 'READ'
 }
 
 type SendProgress = { sent: number; failed: number; total: number }
+
+// All notifications that belong to one schedule (every channel and notice type)
+async function fetchScheduleNotifications(scheduleId: number): Promise<NotificationRecord[]> {
+    const res = await fetch(`${API_URL}/notifications/schedule/${scheduleId}`, { credentials: 'include' })
+    if (!res.ok) throw new Error('Failed to load notifications')
+    return res.json()
+}
 
 const ANIMATIONS = `
 @keyframes sch-fade-up { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
@@ -79,6 +92,25 @@ function formatDate(iso: string) {
     })
 }
 
+// Local date as YYYY-MM-DD (toISOString is UTC and can be a day off near midnight in Kenya)
+function localToday() {
+    const d = new Date()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+// A pickup is overdue when its date has passed and it is still open
+function isOverdue(s: { status: Status; collectionDate: string }, today: string) {
+    return (s.status === 'SCHEDULED' || s.status === 'IN_PROGRESS') && s.collectionDate < today
+}
+
+// Whole days from one YYYY-MM-DD date to another
+function daysBetween(fromIso: string, toIso: string) {
+    const [fy, fm, fd] = fromIso.split('-').map(Number)
+    const [ty, tm, td] = toIso.split('-').map(Number)
+    return Math.round((new Date(ty, tm - 1, td).getTime() - new Date(fy, fm - 1, fd).getTime()) / 86400000)
+}
+
 export default function Schedules() {
     const [schedules, setSchedules] = useState<Schedules[]>([])
     const [trucks, setTrucks] = useState<Truck[]>([])
@@ -89,6 +121,7 @@ export default function Schedules() {
     const [notice, setNotice] = useState('')
     const [formError, setFormError] = useState('')
     const [filter, setFilter] = useState<Filter>('ALL')
+    const [page, setPage] = useState(1)
 
     const [showForm, setShowForm] = useState(false)
     const [editingSchedule, setEditingSchedule] = useState<Schedules | null>(null)
@@ -171,8 +204,33 @@ export default function Schedules() {
             setFormError('Please pick a zone.')
             return
         }
-        setSaving(true)
         setFormError('')
+        setNotice('')
+
+        // Same rules as the backend: cancelling sends a CANCELLED notice, a new
+        // date on a live schedule sends an UPDATED notice.
+        const cancelling = !!editingSchedule && status === 'CANCELLED' && editingSchedule.status !== 'CANCELLED'
+        const dateChanged = !!editingSchedule && editingSchedule.collectionDate !== collectionDate
+        const willNotify = cancelling || (dateChanged && status !== 'CANCELLED')
+
+        // Warn first if residents were already told about this schedule
+        if (editingSchedule && willNotify) {
+            try {
+                const before = await fetchScheduleNotifications(editingSchedule.id)
+                if (before.some((n) => n.status !== 'FAILED')) {
+                    const what = cancelling ? 'a cancellation message' : 'a message with the new date'
+                    const ok = confirm(
+                        `Residents were already notified about this schedule.\n\nSaving will send them ${what}. Continue?`
+                    )
+                    if (!ok) return
+                }
+            } catch (err) {
+                // If the check fails, still let the save go ahead
+                console.error(err)
+            }
+        }
+
+        setSaving(true)
 
         const payload = {
             zone: { id: Number(zoneId) },
@@ -205,8 +263,28 @@ export default function Schedules() {
                 return
             }
 
+            // Tell the admin how many residents were messaged about the change
+            let message = ''
+            if (editingSchedule && willNotify) {
+                try {
+                    const type: NoticeType = cancelling ? 'CANCELLED' : 'UPDATED'
+                    const after = await fetchScheduleNotifications(editingSchedule.id)
+                    const rows = after.filter((n) => n.noticeType === type && n.noticeDate === collectionDate)
+                    const failed = rows.filter((n) => n.status === 'FAILED').length
+                    const about = cancelling ? 'the cancellation' : 'the new date'
+                    message =
+                        rows.length === 0
+                            ? 'Schedule saved. Residents had not been notified yet, so no message was sent.'
+                            : `Schedule saved. ${rows.length} resident${rows.length === 1 ? '' : 's'} messaged about ${about}` +
+                            (failed > 0 ? `, ${failed} failed.` : '.')
+                } catch (err) {
+                    console.error(err)
+                }
+            }
+
             await fetchSchedules()
             resetForm()
+            if (message) setNotice(message)
         } catch (err) {
             console.error(err)
             setFormError('Could not save the schedule.')
@@ -245,13 +323,41 @@ export default function Schedules() {
         }
     }
 
-    // Queues zone notifications, then polls until every message has left PENDING.
+    // Quick fix for an overdue pickup that actually happened: mark it completed
+    async function markCompleted(s: Schedules) {
+        if (!confirm('Mark this pickup as completed?')) return
+        setError('')
+        setNotice('')
+        try {
+            const res = await fetch(`${API_URL}/schedules/${s.id}`, {
+                method: 'PUT',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    zone: { id: s.zone.id },
+                    truck: s.truck ? { id: s.truck.id } : null,
+                    collectionDate: s.collectionDate,
+                    status: 'COMPLETED',
+                }),
+            })
+            if (!res.ok) throw new Error('Failed to update schedule')
+            await fetchSchedules()
+            setNotice(`Marked as completed: ${zoneName(s.zone?.id)}, ${formatDate(s.collectionDate)}.`)
+        } catch (err) {
+            console.error(err)
+            setError('Could not update the schedule. Please try again.')
+        }
+    }
+
+    // Queues zone notifications, then polls until none of this send is still PENDING.
     async function sendZoneNotifications(scheduleId: number, channel: Channel) {
         if (sendingId !== null) return
         setSendingId(scheduleId)
         setSendProgress(null)
         setError('')
         setNotice('')
+
+        const date = schedules.find((s) => s.id === scheduleId)?.collectionDate
 
         try {
             const res = await fetch(
@@ -276,20 +382,23 @@ export default function Schedules() {
                 return
             }
 
+            if (pollRef.current) clearInterval(pollRef.current)
             pollRef.current = setInterval(async () => {
                 try {
-                    const notifRes = await fetch(`${API_URL}/notifications`, { credentials: 'include' })
-                    if (!notifRes.ok) return
-                    const all: NotificationRecord[] = await notifRes.json()
-                    const mine = all.filter((n) => n.schedule?.id === scheduleId)
-                    const failed = mine.filter((n) => n.status === 'FAILED').length
-                    // SENT, DELIVERED and READ all mean the message went out
-                    const sent = mine.filter((n) =>
-                        ['SENT', 'DELIVERED', 'READ'].includes(n.status)
-                    ).length
-                    setSendProgress({ sent, failed, total })
+                    const all = await fetchScheduleNotifications(scheduleId)
+                    // Only this send: the initial notice, on this channel, for this date
+                    const mine = all.filter(
+                        (n) =>
+                            n.channel === channel &&
+                            n.noticeType === 'SCHEDULED' &&
+                            (!date || n.noticeDate === date)
+                    )
+                    const pending = mine.filter((n) => n.status === 'PENDING').length
+                    const settled = Math.max(0, total - pending)
+                    const failed = Math.min(mine.filter((n) => n.status === 'FAILED').length, settled)
+                    setSendProgress({ sent: settled - failed, failed, total })
 
-                    if (sent + failed >= total) {
+                    if (pending === 0) {
                         if (pollRef.current) clearInterval(pollRef.current)
                         setSendingId(null)
                     }
@@ -353,9 +462,29 @@ export default function Schedules() {
     const inProgressCount = count('IN_PROGRESS')
     const completedCount = count('COMPLETED')
     const cancelledCount = count('CANCELLED')
+    const today = localToday()
+    const overdueCount = schedules.filter((s) => isOverdue(s, today)).length
 
-    const sorted = [...schedules].sort((a, b) => b.collectionDate.localeCompare(a.collectionDate))
-    const visible = filter === 'ALL' ? sorted : sorted.filter((s) => s.status === filter)
+    // Newest collection date first; id breaks ties so the order stays stable
+    const sorted = [...schedules].sort(
+        (a, b) => b.collectionDate.localeCompare(a.collectionDate) || b.id - a.id
+    )
+    const visible =
+        filter === 'ALL'
+            ? sorted
+            : filter === 'OVERDUE'
+                ? sorted.filter((s) => isOverdue(s, today))
+                : sorted.filter((s) => s.status === filter)
+
+    // Pagination: clamp the page so deleting the last item on a page doesn't leave you on an empty one
+    const totalPages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE))
+    const currentPage = Math.min(page, totalPages)
+    const paged = visible.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+
+    function changeFilter(next: Filter) {
+        setFilter(next)
+        setPage(1)
+    }
 
     const filters: { key: Filter; label: string; count: number }[] = [
         { key: 'ALL', label: 'All', count: schedules.length },
@@ -363,6 +492,7 @@ export default function Schedules() {
         { key: 'IN_PROGRESS', label: 'In progress', count: inProgressCount },
         { key: 'COMPLETED', label: 'Completed', count: completedCount },
         { key: 'CANCELLED', label: 'Cancelled', count: cancelledCount },
+        { key: 'OVERDUE', label: 'Overdue', count: overdueCount },
     ]
 
     const inputCls =
@@ -386,7 +516,7 @@ export default function Schedules() {
                             <p className="mt-1 text-sm text-[#c1d2c7]">
                                 {schedules.length === 0
                                     ? 'Plan zone pickups, assign trucks and notify residents.'
-                                    : `${completedCount} of ${schedules.length} schedules completed`}
+                                    : `${completedCount} of ${schedules.length} schedules completed${overdueCount > 0 ? ` · ${overdueCount} overdue` : ''}`}
                             </p>
                         </div>
                     </div>
@@ -539,13 +669,21 @@ export default function Schedules() {
                         {filters.map((f) => (
                             <button
                                 key={f.key}
-                                onClick={() => setFilter(f.key)}
+                                onClick={() => changeFilter(f.key)}
                                 className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
                                     filter === f.key ? 'bg-[#173a2e] text-white' : 'text-muted-foreground hover:text-foreground'
                                 }`}
                             >
                                 {f.label}
-                                <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${filter === f.key ? 'bg-white/15' : 'bg-muted'}`}>
+                                <span
+                                    className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+                                        f.key === 'OVERDUE' && f.count > 0
+                                            ? 'bg-red-500 text-white'
+                                            : filter === f.key
+                                                ? 'bg-white/15'
+                                                : 'bg-muted'
+                                    }`}
+                                >
                                     {f.count}
                                 </span>
                             </button>
@@ -570,7 +708,7 @@ export default function Schedules() {
                             }
                         />
                     ) : (
-                        visible.map((s, i) => (
+                        paged.map((s, i) => (
                             <ScheduleRow
                                 key={s.id}
                                 schedule={s}
@@ -579,6 +717,9 @@ export default function Schedules() {
                                 sending={sendingId === s.id}
                                 anySending={sendingId !== null}
                                 progress={sendingId === s.id ? sendProgress : null}
+                                overdue={isOverdue(s, today)}
+                                daysLate={daysBetween(s.collectionDate, today)}
+                                onComplete={() => markCompleted(s)}
                                 onSend={(channel) => sendZoneNotifications(s.id, channel)}
                                 onEdit={() => startEdit(s)}
                                 onDelete={() => handleDelete(s.id)}
@@ -586,8 +727,85 @@ export default function Schedules() {
                         ))
                     )}
                 </div>
+
+                {!loading && visible.length > 0 && (
+                    <Pagination
+                        page={currentPage}
+                        totalPages={totalPages}
+                        total={visible.length}
+                        pageSize={PAGE_SIZE}
+                        onChange={setPage}
+                    />
+                )}
             </section>
         </>
+    )
+}
+
+/* ---------- Pagination ---------- */
+
+function Pagination({ page, totalPages, total, pageSize, onChange }: {
+    page: number; totalPages: number; total: number; pageSize: number
+    onChange: (p: number) => void
+}) {
+    const from = (page - 1) * pageSize + 1
+    const to = Math.min(page * pageSize, total)
+
+    // 1 … 4 5 6 … 12 style list
+    const items: (number | '…')[] = []
+    for (let p = 1; p <= totalPages; p++) {
+        if (p === 1 || p === totalPages || Math.abs(p - page) <= 1) items.push(p)
+        else if (items[items.length - 1] !== '…') items.push('…')
+    }
+
+    return (
+        <nav
+            aria-label="Pagination"
+            className="mt-5 flex flex-col items-center justify-between gap-3 border-t pt-4 sm:flex-row"
+        >
+            <p className="text-xs text-muted-foreground">
+                Showing <span className="font-semibold text-foreground tabular-nums">{from}–{to}</span> of{' '}
+                <span className="font-semibold text-foreground tabular-nums">{total}</span>
+            </p>
+
+            {totalPages > 1 && (
+                <div className="flex items-center gap-1">
+                    <button
+                        onClick={() => onChange(page - 1)}
+                        disabled={page === 1}
+                        aria-label="Previous page"
+                        className="rounded-lg border p-2 text-muted-foreground transition hover:bg-muted disabled:opacity-40"
+                    >
+                        <ChevronLeft size={16} />
+                    </button>
+                    {items.map((it, i) =>
+                        it === '…' ? (
+                            <span key={`gap-${i}`} className="px-2 text-xs text-muted-foreground">…</span>
+                        ) : (
+                            <button
+                                key={it}
+                                onClick={() => onChange(it)}
+                                aria-label={`Page ${it}`}
+                                aria-current={it === page ? 'page' : undefined}
+                                className={`min-w-9 rounded-lg px-3 py-2 text-xs font-semibold tabular-nums transition ${
+                                    it === page ? 'bg-[#173a2e] text-white' : 'border text-muted-foreground hover:bg-muted'
+                                }`}
+                            >
+                                {it}
+                            </button>
+                        )
+                    )}
+                    <button
+                        onClick={() => onChange(page + 1)}
+                        disabled={page === totalPages}
+                        aria-label="Next page"
+                        className="rounded-lg border p-2 text-muted-foreground transition hover:bg-muted disabled:opacity-40"
+                    >
+                        <ChevronRight size={16} />
+                    </button>
+                </div>
+            )}
+        </nav>
     )
 }
 
@@ -710,21 +928,36 @@ function Stat({ icon: Icon, label, value, detail, tone, delay }: {
     )
 }
 
-function ScheduleRow({ schedule: s, zoneLabel, delay, sending, anySending, progress, onSend, onEdit, onDelete }: {
+function ScheduleRow({
+                         schedule: s, zoneLabel, delay, sending, anySending, progress,
+                         overdue, daysLate, onSend, onEdit, onDelete, onComplete,
+                     }: {
     schedule: Schedules
     zoneLabel: string
     delay: number
     sending: boolean
     anySending: boolean
     progress: SendProgress | null
+    overdue: boolean
+    daysLate: number
     onSend: (channel: Channel) => void
     onEdit: () => void
     onDelete: () => void
+    onComplete: () => void
 }) {
     const st = STATUS_STYLES[s.status]
     const StatusIcon = st.icon
     const done = progress ? progress.sent + progress.failed : 0
     const pct = progress && progress.total > 0 ? Math.round((done / progress.total) * 100) : 0
+
+    // No point telling residents about a pickup that is cancelled or already done
+    const closed = s.status === 'CANCELLED' || s.status === 'COMPLETED' || overdue
+    const closedHint =
+        s.status === 'CANCELLED'
+            ? 'This schedule is cancelled'
+            : s.status === 'COMPLETED'
+                ? 'This pickup is already completed'
+                : 'The pickup date has passed'
 
     return (
         <div className="sch-in sch-lift rounded-xl bg-muted/60 p-3" style={{ animationDelay: `${delay}ms` }}>
@@ -751,11 +984,18 @@ function ScheduleRow({ schedule: s, zoneLabel, delay, sending, anySending, progr
                     {st.label}
                 </span>
 
+                {overdue && (
+                    <span className="flex items-center gap-1.5 rounded-full bg-red-100 px-2.5 py-1 text-[10px] font-semibold text-red-700">
+                        <AlertCircle size={12} />
+                        Overdue
+                    </span>
+                )}
+
                 <div className="flex items-center gap-1">
                     <button
-                        disabled={anySending}
+                        disabled={anySending || closed}
                         onClick={() => onSend('SMS')}
-                        title="Send SMS to zone residents"
+                        title={closed ? closedHint : 'Send SMS to zone residents'}
                         aria-label={`Send SMS for schedule ${s.id}`}
                         className="flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs font-semibold text-[#39705a] transition hover:bg-[#e3f1de] disabled:opacity-40 disabled:hover:bg-transparent"
                     >
@@ -763,9 +1003,9 @@ function ScheduleRow({ schedule: s, zoneLabel, delay, sending, anySending, progr
                         <span className="hidden lg:inline">SMS</span>
                     </button>
                     <button
-                        disabled={anySending}
+                        disabled={anySending || closed}
                         onClick={() => onSend('WHATSAPP')}
-                        title="Send WhatsApp to zone residents"
+                        title={closed ? closedHint : 'Send WhatsApp to zone residents'}
                         aria-label={`Send WhatsApp for schedule ${s.id}`}
                         className="flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs font-semibold text-[#39705a] transition hover:bg-[#e3f1de] disabled:opacity-40 disabled:hover:bg-transparent"
                     >
@@ -788,6 +1028,31 @@ function ScheduleRow({ schedule: s, zoneLabel, delay, sending, anySending, progr
                     </button>
                 </div>
             </div>
+
+            {overdue && (
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-3">
+                    <p className="flex items-center gap-1.5 text-xs font-medium text-red-600">
+                        <AlertCircle size={13} />
+                        Due {daysLate} day{daysLate === 1 ? '' : 's'} ago and not marked completed
+                    </p>
+                    <div className="flex gap-2">
+                        <button
+                            onClick={onComplete}
+                            className="flex items-center gap-1.5 rounded-lg bg-[#173a2e] px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-[#245843]"
+                        >
+                            <CheckCircle2 size={13} />
+                            Mark completed
+                        </button>
+                        <button
+                            onClick={onEdit}
+                            className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition hover:bg-muted"
+                        >
+                            <CalendarDays size={13} />
+                            Reschedule
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {sending && progress && (
                 <div className="mt-3 border-t border-border/60 pt-3">

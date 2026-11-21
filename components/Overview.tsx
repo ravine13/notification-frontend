@@ -52,6 +52,13 @@ function localIsoDate(d = new Date()) {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
+// Whole days from one YYYY-MM-DD date to another
+function daysBetween(fromIso: string, toIso: string) {
+    const [fy, fm, fd] = fromIso.split('-').map(Number)
+    const [ty, tm, td] = toIso.split('-').map(Number)
+    return Math.round((new Date(ty, tm - 1, td).getTime() - new Date(fy, fm - 1, fd).getTime()) / 86400000)
+}
+
 // Counts up from 0 to the target number
 function useCountUp(target: number, duration = 900) {
     const [value, setValue] = useState(0)
@@ -146,6 +153,11 @@ export default function Overview({
     const schedulesToday = schedules.filter((s) => s.collectionDate === todayIso && s.status !== 'CANCELLED')
     const completedToday = schedulesToday.filter((s) => s.status === 'COMPLETED').length
 
+    // Pickups whose date has passed but were never completed or cancelled
+    const overdueSchedules = schedules
+        .filter((s) => (s.status === 'SCHEDULED' || s.status === 'IN_PROGRESS') && s.collectionDate < todayIso)
+        .sort((a, b) => a.collectionDate.localeCompare(b.collectionDate))
+
     // Which truck is on duty today, keyed by truck id
     const todayByTruck = new Map<number, Schedule>()
     schedulesToday.forEach((s) => {
@@ -226,6 +238,61 @@ export default function Overview({
                         View schedules <ChevronRight size={16} />
                     </button>
                 </div>
+            </section>
+
+            {/* Needs attention: pickups whose date passed without being completed */}
+            <section
+                className={`ov-in mb-6 rounded-2xl border p-5 shadow-sm ${
+                    overdueSchedules.length > 0 ? 'border-red-300 bg-card' : 'bg-card'
+                }`}
+                style={{ animationDelay: '120ms' }}
+            >
+                <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                        <div
+                            className={`flex size-10 items-center justify-center rounded-xl ${
+                                overdueSchedules.length > 0 ? 'bg-red-100 text-red-600' : 'bg-[#e3f1de] text-[#4c8c62]'
+                            }`}
+                        >
+                            {overdueSchedules.length > 0 ? <AlertTriangle size={19} /> : <CheckCircle2 size={19} />}
+                        </div>
+                        <div>
+                            <h3 className="font-semibold">
+                                {overdueSchedules.length > 0
+                                    ? `Needs attention: ${overdueSchedules.length} overdue pickup${overdueSchedules.length === 1 ? '' : 's'}`
+                                    : 'All pickups on track'}
+                            </h3>
+                            <p className="mt-0.5 text-xs text-muted-foreground">
+                                {overdueSchedules.length > 0
+                                    ? 'The collection date has passed and the schedule is not marked completed'
+                                    : 'No scheduled pickup is past its date'}
+                            </p>
+                        </div>
+                    </div>
+                    {overdueSchedules.length > 0 && (
+                        <button onClick={onOpenRoutes} className="shrink-0 text-xs font-semibold text-[#39705a]">
+                            Review <ChevronRight className="inline size-4" />
+                        </button>
+                    )}
+                </div>
+
+                {overdueSchedules.length > 0 && (
+                    <div className="mt-4 flex flex-col gap-3">
+                        {overdueSchedules.slice(0, 5).map((s) => (
+                            <OverdueRow
+                                key={s.id}
+                                schedule={s}
+                                zoneName={zoneName(s.zone?.id)}
+                                daysLate={daysBetween(s.collectionDate, todayIso)}
+                            />
+                        ))}
+                        {overdueSchedules.length > 5 && (
+                            <p className="text-xs text-muted-foreground">
+                                and {overdueSchedules.length - 5} more
+                            </p>
+                        )}
+                    </div>
+                )}
             </section>
 
             {/* Stat cards */}
@@ -370,6 +437,26 @@ function EmptyState({ icon: Icon, title, subtitle, compact }: { icon: typeof Map
             <Icon className="mx-auto text-muted-foreground" size={compact ? 22 : 26} />
             <p className="mt-3 text-sm font-semibold">{title}</p>
             <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>
+        </div>
+    )
+}
+
+function OverdueRow({ schedule, zoneName, daysLate }: { schedule: Schedule; zoneName: string; daysLate: number }) {
+    return (
+        <div className="flex items-center gap-3 rounded-xl bg-muted/60 p-3">
+            <div className="flex size-9 items-center justify-center rounded-lg bg-red-100 text-red-600">
+                <AlertTriangle size={16} />
+            </div>
+            <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium">{zoneName}</p>
+                <p className="text-xs text-muted-foreground">
+                    {schedule.collectionDate}
+                    {schedule.truck ? ` · ${schedule.truck.plateNumber}` : ' · No truck'}
+                </p>
+            </div>
+            <span className="rounded-full bg-red-100 px-2.5 py-1 text-[10px] font-semibold text-red-700">
+                {daysLate} day{daysLate === 1 ? '' : 's'} late
+            </span>
         </div>
     )
 }
